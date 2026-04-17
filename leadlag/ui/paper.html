@@ -2,17 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>leadlag — paper trading</title>
+<title>leadlag - paper trading</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>Paper trading</h1>
+<header><h1>Paper Trading</h1>
 <nav>
   <a href="dashboard.html">Dashboard</a>
-  <a href="explorer.html">Explorer</a>
   <a href="collector.html">Collector</a>
-  <a href="quality.html">Quality</a>
+  <a href="explorer.html">Explorer</a>
   <a href="strategy.html">Strategies</a>
   <a href="backtest.html">Backtests</a>
   <a href="paper.html">Paper</a>
@@ -20,74 +19,167 @@
 </header>
 <main>
 <section>
-  <h2>Status</h2>
-  <div class="kv" id="status"></div>
-</section>
-<section>
-  <h2>Running strategies</h2>
-  <div class="filters">
-    <label>Select <select id="name"></select></label>
+  <div class="toolbar">
+    <label>Strategy <select id="strategy"></select></label>
+    <label>Duration hours <input id="duration" type="number" min="0.1" step="0.1" value="12"></label>
+    <button id="start">Start</button>
+    <button id="stop">Stop</button>
+    <button id="restart">Restart</button>
+    <button id="refresh">Refresh</button>
   </div>
-  <h3>Equity</h3>
-  <div class="chart" id="equityChart" style="height:280px"></div>
-  <h3>Open positions</h3>
-  <table id="positions"><thead><tr>
-    <th>trade</th><th>venue</th><th>side</th><th>entry</th><th>hold ms</th><th>mfe</th><th>mae</th>
+  <div id="statusCards" class="cards"></div>
+</section>
+
+<section>
+  <h2>Venue Connectivity</h2>
+  <table id="venues"><thead><tr>
+    <th>venue</th><th>role</th><th>used</th><th>status</th><th>BBO</th><th>taker</th><th>maker</th>
   </tr></thead><tbody></tbody></table>
-  <h3>Recent signals</h3>
-  <table id="signals"><thead><tr>
-    <th>ts</th><th>type</th><th>mag</th><th>action</th><th>reason</th><th>spread</th>
-  </tr></thead><tbody></tbody></table>
-  <h3>Closed trades</h3>
+</section>
+
+<section>
+  <h2>Live Equity</h2>
+  <div class="chart" id="equityChart"></div>
+</section>
+
+<section class="breakdown-grid">
+  <div>
+    <h2>Recent Signals</h2>
+    <table id="signals"><thead><tr><th>time UTC</th><th>signal</th><th>direction</th><th>magnitude</th><th>action</th><th>reason</th><th>spread</th></tr></thead><tbody></tbody></table>
+  </div>
+  <div>
+    <h2>Open Positions</h2>
+    <table id="positions"><thead><tr><th>trade</th><th>venue</th><th>side</th><th>entry</th><th>current MFE</th><th>current MAE</th><th>auto-close</th></tr></thead><tbody></tbody></table>
+  </div>
+</section>
+
+<section>
+  <h2>Closed Trades</h2>
   <table id="trades"><thead><tr>
-    <th>id</th><th>venue</th><th>side</th><th>net bps</th><th>fee</th><th>slip</th><th>exit reason</th>
+    <th>id</th><th>venue</th><th>side</th><th>entry UTC</th><th>exit UTC</th><th>gross</th><th>fee</th><th>slip</th><th>net</th><th>spread</th><th>reason</th>
   </tr></thead><tbody></tbody></table>
+</section>
+
+<section>
+  <h2>Stats</h2>
+  <div id="statsCards" class="cards"></div>
 </section>
 </main>
 <script src="app.js"></script>
 <script>
-let currentName = null;
+const plotBase = { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"}, margin:{t:20,l:55,r:20,b:40} };
+const plotCfg = { responsive:true, displayModeBar:true };
 
-async function refresh() {
-  const st = await fetchJSON("/api/paper/status");
-  const kv = document.getElementById("status"); kv.innerHTML = "";
-  const add = (k, v) => { kv.appendChild(el("div",{class:"k"},[k])); kv.appendChild(el("div",{},[String(v)])); };
-  add("running", st.running ?? false);
-  if (st.strategy) {
-    add("strategy", st.strategy);
-    add("uptime_s", fmt(st.uptime_s, 1));
-    add("cumulative_pnl_bps", fmt(st.cumulative_pnl_bps));
-    add("n_open", st.n_open);
-    add("n_closed", st.n_trades_closed);
-  }
-  if (!currentName) return;
-  const eq = await fetchJSON(`/api/paper/${currentName}/equity`);
-  if (eq.length) {
-    Plotly.newPlot("equityChart",
-      [{x: eq.map(r=>r.ts_ms), y: eq.map(r=>r.cumulative_pnl_bps), mode:"lines+markers"}],
-      { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"},
-        margin:{t:10,l:40,r:10,b:30}, yaxis:{title:"cumulative bps"} },
-      { displayModeBar:false });
-  }
-  const pos = await fetchJSON(`/api/paper/${currentName}/positions`);
-  fillTable("#positions", pos, p => [p.trade_id, p.venue, p.side,
-    fmt(p.entry_price_exec, 4), p.hold_ms, fmt(p.mfe_bps), fmt(p.mae_bps)]);
-  const sigs = await fetchJSON(`/api/paper/${currentName}/signals?last=30`);
-  fillTable("#signals", sigs, s => [s.ts_ms, s.signal_type, fmt(s.magnitude, 2),
-    s.action, s.skip_reason || "—", fmt(s.spread_at_signal_bps)]);
-  const tr = await fetchJSON(`/api/paper/${currentName}/trades`);
-  fillTable("#trades", tr.slice(-50), t => [t.trade_id, t.venue, t.side,
-    fmt(t.net_pnl_bps), fmt(t.fee_total_bps), fmt(t.slippage_total_bps), t.exit_reason]);
+async function loadStrategies() {
+  const strategies = await fetchJSON("/api/strategies");
+  const valid = strategies.filter(s => s.valid);
+  document.getElementById("strategy").innerHTML = valid.map(s => `<option value="${s.name}">${s.name}</option>`).join("");
 }
 
+async function refresh() {
+  const [status, venues, equity, signals, positions, trades, stats] = await Promise.all([
+    fetchJSON("/api/paper/status"),
+    fetchJSON("/api/paper/venues"),
+    fetchJSON("/api/paper/equity"),
+    fetchJSON("/api/paper/signals?last=40"),
+    fetchJSON("/api/paper/positions"),
+    fetchJSON("/api/paper/trades"),
+    fetchJSON("/api/paper/stats"),
+  ]);
+  renderStatus(status);
+  renderVenues(venues);
+  renderEquity(equity);
+  renderSignals(signals);
+  renderPositions(positions);
+  renderTrades(trades.slice(-80));
+  renderStats(stats);
+}
+
+function renderStatus(st) {
+  document.getElementById("start").disabled = !!st.running;
+  document.getElementById("stop").disabled = !st.running;
+  fillCards("statusCards", [
+    ["Status", st.running ? "running" : "stopped"],
+    ["Strategy", st.strategy || "—"],
+    ["Mode", st.mode || "live_ws"],
+    ["Started UTC", st.started_at_ms ? utc(st.started_at_ms) : "—"],
+    ["Uptime", seconds(st.uptime_s)],
+    ["Equity Today", `${signed(Number(st.equity_today || st.cumulative_pnl_bps || 0))} bps`],
+    ["Open", st.n_open || 0],
+    ["Closed", st.n_trades_closed || 0],
+  ]);
+}
+function renderVenues(rows) {
+  fillTable("#venues", rows, r => [r.venue, r.role, r.used_by_strategy ? "yes" : "no", r.status, r.bbo_available ? "yes" : "N/A", fmt(r.taker_fee_bps), fmt(r.maker_fee_bps)]);
+}
+function renderEquity(rows) {
+  if (!rows.length) {
+    document.getElementById("equityChart").innerHTML = `<div class="muted">No closed paper trades yet.</div>`;
+    return;
+  }
+  Plotly.react("equityChart", [{x:rows.map(r=>new Date(Number(r.ts_ms))), y:rows.map(r=>r.cumulative_pnl_bps), mode:"lines+markers", name:"paper"}], {
+    ...plotBase, xaxis:{title:"UTC"}, yaxis:{title:"cumulative bps"},
+  }, plotCfg);
+}
+function renderSignals(rows) {
+  fillTable("#signals", rows, r => [utc(r.ts_ms), r.signal_type, Number(r.direction) > 0 ? "UP" : "DOWN", fmt(r.magnitude), r.action, r.skip_reason || r.error || "—", r.spread_at_signal_bps === null ? "N/A" : fmt(r.spread_at_signal_bps)]);
+}
+function renderPositions(rows) {
+  fillTable("#positions", rows, r => [r.trade_id, r.venue, r.side, fmt(r.entry_price_exec, 4), fmt(r.mfe_bps), fmt(r.mae_bps), utc(Number(r.entry_ts_ms || 0) + Number(r.hold_ms || 0))]);
+}
+function renderTrades(rows) {
+  fillTable("#trades", rows, t => [t.trade_id, t.venue, t.side, utc(t.entry_ts_ms), utc(t.exit_ts_ms), signed(Number(t.gross_pnl_bps || 0)), fmt(t.fee_total_bps), fmt(t.slippage_total_bps), signed(Number(t.net_pnl_bps || 0)), t.spread_at_entry_bps === null ? "N/A" : fmt(t.spread_at_entry_bps), t.exit_reason]);
+}
+function renderStats(s) {
+  fillCards("statsCards", [
+    ["Trades", s.n_trades || 0],
+    ["Total Net", `${signed(Number(s.total_net_pnl_bps || 0))} bps`],
+    ["Avg Trade", `${signed(Number(s.avg_trade_bps || 0))} bps`],
+    ["Win Rate", pct(s.win_rate)],
+    ["Fees", `${fmt(s.total_fees_bps)} bps`],
+    ["Slippage", `${fmt(s.total_slippage_bps)} bps`],
+  ]);
+}
+function fillCards(id, rows) {
+  const box = document.getElementById(id);
+  box.innerHTML = "";
+  rows.forEach(([label, value]) => box.appendChild(el("div", {class:"metric-card"}, [
+    el("div", {class:"metric-label"}, [label]),
+    el("div", {class:"metric-value"}, [String(value)]),
+  ])));
+}
+function seconds(s) {
+  s = Number(s || 0);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return h ? `${h}h ${m}m` : `${m}m ${sec}s`;
+}
+
+document.getElementById("start").onclick = async () => {
+  await postJSON("/api/paper/start", {
+    strategy_name: document.getElementById("strategy").value,
+    duration_s: Math.round(Number(document.getElementById("duration").value || 12) * 3600),
+  });
+  refresh();
+};
+document.getElementById("stop").onclick = async () => { await postJSON("/api/paper/stop", {}); refresh(); };
+document.getElementById("restart").onclick = async () => {
+  await postJSON("/api/paper/stop", {});
+  await postJSON("/api/paper/start", {
+    strategy_name: document.getElementById("strategy").value,
+    duration_s: Math.round(Number(document.getElementById("duration").value || 12) * 3600),
+  });
+  refresh();
+};
+document.getElementById("refresh").onclick = refresh;
+
 (async () => {
-  const strats = await fetchJSON("/api/paper/strategies");
-  const sel = document.getElementById("name");
-  sel.innerHTML = strats.map(s => `<option>${s.name}</option>`).join("");
-  currentName = sel.value || null;
-  sel.onchange = () => { currentName = sel.value; refresh(); };
-  await refresh();
-  setInterval(refresh, 5000);
+  try {
+    await loadStrategies();
+    await refresh();
+    setInterval(refresh, 5000);
+  } catch (err) {
+    showError("main", err);
+  }
 })();
 </script>
 </body>

@@ -31,6 +31,7 @@ from leadlag.venues import REGISTRY
 
 DATA_DIR = Path("data")
 COLLECTOR_PROC: "subprocess.Popen | None" = None
+PAPER_PROC: "subprocess.Popen | None" = None
 UI_DIR = Path(__file__).parent.parent / "ui"
 
 app = FastAPI(title="leadlag-platform", version="0.1.0")
@@ -374,9 +375,44 @@ def api_paper_status():
     if not p.exists():
         return {"running": False}
     try:
-        return json.loads(p.read_text())
+        st = json.loads(p.read_text())
+        st["proc_alive"] = PAPER_PROC is not None and PAPER_PROC.poll() is None
+        return st
     except Exception:
         return {"running": False}
+
+
+@app.post("/api/paper/start")
+def api_paper_start(body: dict = Body(...)):
+    global PAPER_PROC
+    if PAPER_PROC is not None and PAPER_PROC.poll() is None:
+        raise HTTPException(409, {"error": "paper_already_running"})
+    name = body.get("strategy_name")
+    if not name:
+        raise HTTPException(400, {"error": "missing_fields", "required": ["strategy_name"]})
+    path = DATA_DIR / "strategies" / f"{name}.py"
+    if not path.exists():
+        raise HTTPException(400, {"error": "strategy_not_found", "path": str(path)})
+    duration = body.get("duration_s")
+    cmd = [sys.executable, "-m", "leadlag.paper", "--strategy", str(path), "--data-dir", str(DATA_DIR)]
+    if duration:
+        cmd += ["--duration", str(int(duration))]
+    PAPER_PROC = subprocess.Popen(cmd, cwd=str(DATA_DIR.parent.resolve()))
+    return {"ok": True, "pid": PAPER_PROC.pid}
+
+
+@app.post("/api/paper/stop")
+def api_paper_stop():
+    global PAPER_PROC
+    if PAPER_PROC is not None and PAPER_PROC.poll() is None:
+        try:
+            PAPER_PROC.send_signal(signal.SIGINT)
+            PAPER_PROC.wait(timeout=10)
+        except Exception:
+            PAPER_PROC.kill()
+    PAPER_PROC = None
+    _write_json_file(DATA_DIR / ".paper_status.json", {"running": False})
+    return {"ok": True}
 
 
 @app.get("/api/paper/strategies")
@@ -398,8 +434,23 @@ def api_paper_trades(name: str, since_ts: Optional[int] = None):
     return _read_jsonl(DATA_DIR / "paper" / name / "trades.jsonl", since_ts)
 
 
+@app.get("/api/paper/trades")
+def api_paper_current_trades(since_ts: Optional[int] = None):
+    name = _current_paper_name()
+    return _read_jsonl(DATA_DIR / "paper" / name / "trades.jsonl", since_ts) if name else []
+
+
 @app.get("/api/paper/{name}/signals")
 def api_paper_signals(name: str, last: int = 100):
+    rows = _read_jsonl(DATA_DIR / "paper" / name / "signals.jsonl", None)
+    return rows[-last:]
+
+
+@app.get("/api/paper/signals")
+def api_paper_current_signals(last: int = 100):
+    name = _current_paper_name()
+    if not name:
+        return []
     rows = _read_jsonl(DATA_DIR / "paper" / name / "signals.jsonl", None)
     return rows[-last:]
 
@@ -409,9 +460,46 @@ def api_paper_equity(name: str):
     return _read_jsonl(DATA_DIR / "paper" / name / "equity.jsonl", None)
 
 
+@app.get("/api/paper/equity")
+def api_paper_current_equity():
+    name = _current_paper_name()
+    return _read_jsonl(DATA_DIR / "paper" / name / "equity.jsonl", None) if name else []
+
+
 @app.get("/api/paper/{name}/positions")
 def api_paper_positions(name: str):
     p = DATA_DIR / "paper" / name / "positions.json"
+    return json.loads(p.read_text()) if p.exists() else []
+
+
+@app.get("/api/paper/positions")
+def api_paper_current_positions():
+    name = _current_paper_name()
+    if not name:
+        return []
+    p = DATA_DIR / "paper" / name / "positions.json"
+    return json.loads(p.read_text()) if p.exists() else []
+
+
+@app.get("/api/paper/stats")
+def api_paper_stats():
+    trades = api_paper_current_trades()
+    if not trades:
+        return {"n_trades": 0, "total_net_pnl_bps": 0.0, "win_rate": 0.0}
+    total = sum(float(t.get("net_pnl_bps", 0.0)) for t in trades)
+    return {
+        "n_trades": len(trades),
+        "total_net_pnl_bps": total,
+        "win_rate": sum(1 for t in trades if float(t.get("net_pnl_bps", 0.0)) > 0) / len(trades),
+        "avg_trade_bps": total / len(trades),
+        "total_fees_bps": sum(float(t.get("fee_total_bps", 0.0)) for t in trades),
+        "total_slippage_bps": sum(float(t.get("slippage_total_bps", 0.0)) for t in trades),
+    }
+
+
+@app.get("/api/paper/venues")
+def api_paper_venues():
+    p = DATA_DIR / ".paper_venues.json"
     return json.loads(p.read_text()) if p.exists() else []
 
 
@@ -432,6 +520,22 @@ def _read_jsonl(path: Path, since_ts: Optional[int]) -> list[dict]:
                 continue
             out.append(r)
     return out
+
+
+def _current_paper_name() -> Optional[str]:
+    p = DATA_DIR / ".paper_status.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text()).get("strategy")
+    except Exception:
+        return None
+
+
+def _write_json_file(path: Path, data: dict) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    os.replace(tmp, path)
 
 
 # ─── helpers ───

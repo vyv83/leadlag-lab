@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from leadlag.backtest.slippage import compute_slippage_bps
+from leadlag.contracts import utc_from_ms
 from leadlag.realtime.bbo_tracker import BboTracker
 from leadlag.realtime.detector import RealtimeDetector
 from leadlag.strategy import Context, Event, Order, Strategy
@@ -230,20 +231,28 @@ class PaperTrader:
             "trade_id": p.trade_id, "signal_bin_idx": p.signal_bin_idx,
             "signal_type": p.signal_type, "direction": p.direction,
             "magnitude_sigma": p.magnitude_sigma, "venue": p.venue, "side": p.side,
+            "entry_type": "market",
             "entry_ts_ms": p.entry_ts_ms, "exit_ts_ms": now_ms,
+            "entry_time_utc": utc_from_ms(p.entry_ts_ms), "exit_time_utc": utc_from_ms(now_ms),
             "entry_price_vwap": p.entry_price_vwap, "exit_price_vwap": exit_price_vwap,
             "entry_price_exec": p.entry_price_exec, "exit_price_exec": exit_exec,
             "slippage_entry_bps": p.slippage_entry_bps, "slippage_exit_bps": slip_exit,
             "slippage_total_bps": slip_total,
+            "slippage_source_entry": p.slippage_source_entry,
+            "slippage_source_exit": slip_src_exit,
             "slippage_source": p.slippage_source_entry,
             "spread_at_entry_bps": p.spread_at_entry_bps, "spread_at_exit_bps": spread_exit,
             "gross_pnl_bps": gross_bps,
             "fee_entry_bps": p.fee_entry_bps, "fee_exit_bps": fee_exit, "fee_total_bps": fee_total,
+            "fee_type_entry": p.fee_type, "fee_type_exit": "taker",
             "fee_type": p.fee_type, "net_pnl_bps": net_bps,
-            "hold_ms": now_ms - p.entry_ts_ms, "exit_reason": exit_reason,
+            "hold_ms": now_ms - p.entry_ts_ms, "planned_hold_ms": p.hold_ms,
+            "exit_reason": exit_reason,
+            "stop_loss_bps": p.stop_loss_bps, "take_profit_bps": p.take_profit_bps,
             "mfe_bps": p.mfe_bps, "mae_bps": p.mae_bps,
             "mfe_time_ms": p.mfe_time_ms, "mae_time_ms": p.mae_time_ms,
             "bbo_available": p.bbo_available, "n_lagging_at_signal": p.n_lagging,
+            "leader_dev_sigma": p.magnitude_sigma,
         }
         self._append_line("trades.jsonl", trade)
         self._append_line("equity.jsonl", {
@@ -302,8 +311,10 @@ class PaperTrader:
             "running": True,
             "strategy": self.name,
             "started_at_ms": self.started_at_ms,
+            "started_at_utc": utc_from_ms(self.started_at_ms),
             "uptime_s": (int(time.time() * 1000) - self.started_at_ms) / 1000,
             "cumulative_pnl_bps": self.cumulative_pnl_bps,
+            "equity_today": self.cumulative_pnl_bps,
             "n_open": sum(len(v) for v in self.open.values()),
             "n_trades_closed": self._trade_id - sum(len(v) for v in self.open.values()),
         }
