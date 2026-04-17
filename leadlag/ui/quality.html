@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>leadlag — data quality</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Data quality</h1>
+<nav>
+  <a href="dashboard.html">Dashboard</a>
+  <a href="explorer.html">Explorer</a>
+  <a href="collector.html">Collector</a>
+  <a href="quality.html">Quality</a>
+  <a href="strategy.html">Strategies</a>
+  <a href="backtest.html">Backtests</a>
+</nav>
+</header>
+<main>
+<section>
+  <div class="filters">
+    <label>Session <select id="session"></select></label>
+  </div>
+  <div class="kv" id="summary"></div>
+  <h2>Per-venue</h2>
+  <table id="venues"><thead><tr>
+    <th>venue</th><th>ticks</th><th>bbo</th><th>σ (ret)</th>
+  </tr></thead><tbody></tbody></table>
+</section>
+</main>
+<script src="app.js"></script>
+<script>
+async function load(id) {
+  const q = await fetchJSON(`/api/sessions/${id}/quality`);
+  const Q = q.quality || {}, M = q.meta || {};
+  const sum = document.getElementById("summary"); sum.innerHTML = "";
+  const add = (k, v) => { sum.appendChild(el("div",{class:"k"},[k])); sum.appendChild(el("div",{},[String(v ?? "—")])); };
+  add("duration_s", Q.duration_s);
+  add("coverage_pct", Q.coverage_pct);
+  add("t_range", `${Q.t_start_ms ?? "—"} → ${Q.t_end_ms ?? "—"}`);
+  add("n_events", M.n_events);
+  add("venues", (M.venues || []).length);
+  const tpv = Q.ticks_per_venue || {};
+  const bpv = Q.bbo_per_venue || {};
+  const sig = Q.sigma_per_venue || {};
+  const rows = (M.venues || Object.keys(tpv)).map(v => ({
+    venue: v, ticks: tpv[v] ?? 0, bbo: bpv[v] ?? 0, sigma: sig[v] ?? null,
+  }));
+  fillTable("#venues", rows, r => [r.venue, r.ticks, r.bbo, fmt(r.sigma, 5)]);
+}
+
+(async () => {
+  const sessions = await fetchJSON("/api/sessions");
+  const sel = document.getElementById("session");
+  sel.innerHTML = sessions.map(s => `<option>${s.id}</option>`).join("");
+  const pre = qs("session"); if (pre) sel.value = pre;
+  sel.onchange = () => load(sel.value);
+  if (sel.value) await load(sel.value);
+})();
+</script>
+</body>
+</html>

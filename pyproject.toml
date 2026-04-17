@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leadlag"
+version = "0.1.0"
+description = "Lead-lag crypto trading lab"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "websockets",
+    "pyyaml",
+    "fastapi",
+    "uvicorn",
+    "psutil",
+    "tqdm",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["leadlag*"]

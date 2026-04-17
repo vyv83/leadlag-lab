@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>leadlag — trade</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Trade</h1>
+<nav>
+  <a href="dashboard.html">Dashboard</a>
+  <a href="explorer.html">Explorer</a>
+  <a href="strategy.html">Strategies</a>
+  <a href="backtest.html">Backtests</a>
+</nav>
+</header>
+<main>
+<section>
+  <h2 id="title"></h2>
+  <div class="kv" id="kv"></div>
+  <p><a id="backLink" href="#">← back to backtest</a> ·
+     <a id="explorerLink" href="#">open in explorer</a></p>
+</section>
+</main>
+<script src="app.js"></script>
+<script>
+(async () => {
+  const bt = qs("backtest"), tid = qs("trade");
+  if (!bt || tid == null) { document.body.innerHTML = "<p>missing params</p>"; return; }
+  document.getElementById("backLink").href = `backtest.html?id=${bt}`;
+  const { trade } = await fetchJSON(`/api/backtests/${bt}/trade/${tid}`);
+  document.getElementById("title").textContent = `Trade #${trade.trade_id} — ${trade.venue} ${trade.side}`;
+  const meta = await fetchJSON(`/api/backtests/${bt}/meta`);
+  document.getElementById("explorerLink").href =
+    `explorer.html?session=${meta.session_id}`;
+  const kv = document.getElementById("kv");
+  for (const [k, v] of Object.entries(trade)) {
+    kv.appendChild(el("div",{class:"k"},[k]));
+    kv.appendChild(el("div",{},[typeof v === "number" ? v.toFixed(4) : String(v)]));
+  }
+})();
+</script>
+</body>
+</html>

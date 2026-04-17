@@ -1,0 +1,45 @@
+# Python caches and build output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments and local env files
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Runtime data and generated trading artifacts
+data/ticks/
+data/bbo/
+data/sessions/
+data/backtest/
+data/paper/
+data/.system_history.jsonl
+data/.ping_cache.json
+data/.collector_status.json
+data/.collector_status.json.tmp
+data/.paper_status.json
+data/.paper_status.json.tmp
+data/.collector.sock
+data/**/*.parquet
+data/**/*.jsonl
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store
+
+# Jupyter runtime noise
+.ipynb_checkpoints/

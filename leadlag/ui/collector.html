@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>leadlag — collector</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Collector</h1>
+<nav>
+  <a href="dashboard.html">Dashboard</a>
+  <a href="explorer.html">Explorer</a>
+  <a href="collector.html">Collector</a>
+  <a href="quality.html">Quality</a>
+  <a href="strategy.html">Strategies</a>
+  <a href="backtest.html">Backtests</a>
+</nav>
+</header>
+<main>
+<section>
+  <h2>Control</h2>
+  <div class="filters">
+    <label>Duration (s) <input id="duration" type="number" value="600"></label>
+    <label>Venues (comma, blank=all) <input id="venues" style="width:360px" placeholder="Lighter Perp,OKX Perp"></label>
+    <button id="start">Start</button>
+    <button id="stop">Stop</button>
+  </div>
+  <div class="kv" id="status"></div>
+</section>
+<section>
+  <h2>Parquet files under data/</h2>
+  <table id="files"><thead><tr><th>path</th><th>size MB</th><th>modified</th></tr></thead><tbody></tbody></table>
+</section>
+</main>
+<script src="app.js"></script>
+<script>
+async function refresh() {
+  const st = await fetchJSON("/api/collector/status");
+  const kv = document.getElementById("status"); kv.innerHTML = "";
+  const add = (k, v) => { kv.appendChild(el("div",{class:"k"},[k])); kv.appendChild(el("div",{},[String(v)])); };
+  add("running", st.running ?? false);
+  add("proc_alive", st.proc_alive ?? false);
+  if (st.session_id) add("session_id", st.session_id);
+  if (st.venues) add("venues", (st.venues || []).map(v => `${v.name}:${v.status}(${v.ticks})`).join(", "));
+  const files = await fetchJSON("/api/system/files");
+  fillTable("#files", files, f => [f.path, f.size_mb, new Date(f.modified).toISOString()]);
+}
+
+document.getElementById("start").onclick = async () => {
+  const body = {
+    duration_s: Number(document.getElementById("duration").value),
+    venues: document.getElementById("venues").value.split(",").map(s => s.trim()).filter(Boolean),
+  };
+  const r = await apiFetch("/api/collector/start", {
+    method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body),
+  });
+  if (!r.ok) alert("start failed: " + await r.text());
+  refresh();
+};
+document.getElementById("stop").onclick = async () => {
+  await apiFetch("/api/collector/stop", { method:"POST" });
+  refresh();
+};
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

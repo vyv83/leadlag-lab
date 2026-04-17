@@ -1,0 +1,15 @@
+[Unit]
+Description=leadlag-lab FastAPI (uvicorn on :8899)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/projects/leadlag-lab
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/root/projects/leadlag/.venv/bin/python -m leadlag.api
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

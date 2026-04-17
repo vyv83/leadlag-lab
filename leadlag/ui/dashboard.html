@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>leadlag — dashboard</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+<header><h1>leadlag-platform</h1>
+<nav>
+  <a href="dashboard.html">Dashboard</a>
+  <a href="explorer.html">Explorer</a>
+  <a href="collector.html">Collector</a>
+  <a href="quality.html">Quality</a>
+  <a href="strategy.html">Strategies</a>
+  <a href="backtest.html">Backtests</a>
+</nav>
+</header>
+<main>
+<section>
+  <h2>System</h2>
+  <div class="kv" id="sys"></div>
+  <div class="chart" id="cpuChart" style="height:200px"></div>
+</section>
+<section>
+  <h2>Exchange ping</h2>
+  <table id="pings"><thead><tr>
+    <th>venue</th><th>host</th><th>latency ms</th><th>status</th>
+  </tr></thead><tbody></tbody></table>
+</section>
+<section>
+  <h2>Sessions</h2>
+  <table id="sessions"><thead><tr>
+    <th>id</th><th>collection</th><th>params_hash</th>
+    <th>n_events</th><th>n_C</th>
+  </tr></thead><tbody></tbody></table>
+</section>
+<section>
+  <h2>Backtests</h2>
+  <table id="backtests"><thead><tr>
+    <th>id</th><th>strategy</th><th>session</th>
+    <th>n_trades</th><th>net_bps</th><th>win</th><th>sharpe</th>
+  </tr></thead><tbody></tbody></table>
+</section>
+</main>
+<script src="app.js"></script>
+<script>
+async function refreshSystem() {
+  const st = await fetchJSON("/api/system/stats");
+  const sys = document.getElementById("sys"); sys.innerHTML = "";
+  const add = (k, v) => { sys.appendChild(el("div",{class:"k"},[k])); sys.appendChild(el("div",{},[String(v)])); };
+  add("CPU %", st.cpu_percent);
+  add("RAM", `${st.ram_used_gb} / ${st.ram_total_gb} GB (${st.ram_percent}%)`);
+  add("Disk", `${st.disk_used_gb} / ${st.disk_total_gb} GB`);
+  add("Net", `sent ${st.net_bytes_sent} / recv ${st.net_bytes_recv}`);
+  const hist = await fetchJSON("/api/system/history?minutes=60");
+  if (hist.length) {
+    Plotly.newPlot("cpuChart",
+      [{x: hist.map(r=>r.ts), y: hist.map(r=>r.cpu_pct), mode:"lines", name:"cpu %"}],
+      { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"},
+        margin:{t:10,l:40,r:10,b:30}, yaxis:{title:"cpu %"} },
+      { displayModeBar:false });
+  }
+  const pings = await fetchJSON("/api/system/pings");
+  const rows = Object.entries(pings.venues || {}).map(([v, r]) => ({venue:v, ...r}));
+  fillTable("#pings", rows, r => [r.venue, r.host, fmt(r.latency_ms, 1), r.status]);
+}
+
+(async () => {
+  await refreshSystem();
+  setInterval(refreshSystem, 5000);
+  const s = await fetchJSON("/api/sessions");
+  fillTable("#sessions", s, r => [
+    linkTo(`explorer.html?session=${r.id}`, r.id),
+    r.collection_id, r.params_hash, r.n_events, r.n_signal_c,
+  ]);
+  const b = await fetchJSON("/api/backtests");
+  fillTable("#backtests", b, r => [
+    linkTo(`backtest.html?id=${r.id}`, r.id),
+    r.strategy, r.session_id, r.n_trades,
+    fmt(r.total_net_pnl_bps), pct(r.win_rate), fmt(r.sharpe),
+  ]);
+})();
+</script>
+</body>
+</html>

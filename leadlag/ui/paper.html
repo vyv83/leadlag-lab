@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>leadlag — paper trading</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+<header><h1>Paper trading</h1>
+<nav>
+  <a href="dashboard.html">Dashboard</a>
+  <a href="explorer.html">Explorer</a>
+  <a href="collector.html">Collector</a>
+  <a href="quality.html">Quality</a>
+  <a href="strategy.html">Strategies</a>
+  <a href="backtest.html">Backtests</a>
+  <a href="paper.html">Paper</a>
+</nav>
+</header>
+<main>
+<section>
+  <h2>Status</h2>
+  <div class="kv" id="status"></div>
+</section>
+<section>
+  <h2>Running strategies</h2>
+  <div class="filters">
+    <label>Select <select id="name"></select></label>
+  </div>
+  <h3>Equity</h3>
+  <div class="chart" id="equityChart" style="height:280px"></div>
+  <h3>Open positions</h3>
+  <table id="positions"><thead><tr>
+    <th>trade</th><th>venue</th><th>side</th><th>entry</th><th>hold ms</th><th>mfe</th><th>mae</th>
+  </tr></thead><tbody></tbody></table>
+  <h3>Recent signals</h3>
+  <table id="signals"><thead><tr>
+    <th>ts</th><th>type</th><th>mag</th><th>action</th><th>reason</th><th>spread</th>
+  </tr></thead><tbody></tbody></table>
+  <h3>Closed trades</h3>
+  <table id="trades"><thead><tr>
+    <th>id</th><th>venue</th><th>side</th><th>net bps</th><th>fee</th><th>slip</th><th>exit reason</th>
+  </tr></thead><tbody></tbody></table>
+</section>
+</main>
+<script src="app.js"></script>
+<script>
+let currentName = null;
+
+async function refresh() {
+  const st = await fetchJSON("/api/paper/status");
+  const kv = document.getElementById("status"); kv.innerHTML = "";
+  const add = (k, v) => { kv.appendChild(el("div",{class:"k"},[k])); kv.appendChild(el("div",{},[String(v)])); };
+  add("running", st.running ?? false);
+  if (st.strategy) {
+    add("strategy", st.strategy);
+    add("uptime_s", fmt(st.uptime_s, 1));
+    add("cumulative_pnl_bps", fmt(st.cumulative_pnl_bps));
+    add("n_open", st.n_open);
+    add("n_closed", st.n_trades_closed);
+  }
+  if (!currentName) return;
+  const eq = await fetchJSON(`/api/paper/${currentName}/equity`);
+  if (eq.length) {
+    Plotly.newPlot("equityChart",
+      [{x: eq.map(r=>r.ts_ms), y: eq.map(r=>r.cumulative_pnl_bps), mode:"lines+markers"}],
+      { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"},
+        margin:{t:10,l:40,r:10,b:30}, yaxis:{title:"cumulative bps"} },
+      { displayModeBar:false });
+  }
+  const pos = await fetchJSON(`/api/paper/${currentName}/positions`);
+  fillTable("#positions", pos, p => [p.trade_id, p.venue, p.side,
+    fmt(p.entry_price_exec, 4), p.hold_ms, fmt(p.mfe_bps), fmt(p.mae_bps)]);
+  const sigs = await fetchJSON(`/api/paper/${currentName}/signals?last=30`);
+  fillTable("#signals", sigs, s => [s.ts_ms, s.signal_type, fmt(s.magnitude, 2),
+    s.action, s.skip_reason || "—", fmt(s.spread_at_signal_bps)]);
+  const tr = await fetchJSON(`/api/paper/${currentName}/trades`);
+  fillTable("#trades", tr.slice(-50), t => [t.trade_id, t.venue, t.side,
+    fmt(t.net_pnl_bps), fmt(t.fee_total_bps), fmt(t.slippage_total_bps), t.exit_reason]);
+}
+
+(async () => {
+  const strats = await fetchJSON("/api/paper/strategies");
+  const sel = document.getElementById("name");
+  sel.innerHTML = strats.map(s => `<option>${s.name}</option>`).join("");
+  currentName = sel.value || null;
+  sel.onchange = () => { currentName = sel.value; refresh(); };
+  await refresh();
+  setInterval(refresh, 5000);
+})();
+</script>
+</body>
+</html>

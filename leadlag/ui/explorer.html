@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>leadlag — explorer</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+<header><h1>Explorer</h1>
+<nav>
+  <a href="dashboard.html">Dashboard</a>
+  <a href="explorer.html">Explorer</a>
+  <a href="strategy.html">Strategies</a>
+  <a href="backtest.html">Backtests</a>
+</nav>
+</header>
+<main>
+<section>
+  <div class="filters">
+    <label>Session <select id="session"></select></label>
+    <label>Signal <select id="signal"><option value="">any</option><option>A</option><option>B</option><option>C</option></select></label>
+    <label>Min σ <input id="minMag" type="number" step="0.1" value=""></label>
+    <label>Direction <select id="dir"><option value="">any</option><option value="1">up</option><option value="-1">down</option></select></label>
+    <label>Follower <input id="follower" placeholder="Lighter Perp"></label>
+    <button id="apply">Apply</button>
+  </div>
+  <div id="summary"></div>
+  <table id="events"><thead><tr>
+    <th>bin</th><th>signal</th><th>dir</th><th>σ</th><th>leader</th><th>laggards</th><th>n</th>
+  </tr></thead><tbody></tbody></table>
+</section>
+<section id="detail" hidden>
+  <h2>Event detail</h2>
+  <div class="kv" id="detailKv"></div>
+  <div class="chart" id="priceChart"></div>
+</section>
+</main>
+<script src="app.js"></script>
+<script>
+let currentSession = null;
+
+async function loadSessions() {
+  const list = await fetchJSON("/api/sessions");
+  const sel = document.getElementById("session");
+  sel.innerHTML = list.map(s => `<option value="${s.id}">${s.id} (${s.n_events})</option>`).join("");
+  const pre = qs("session");
+  if (pre) sel.value = pre;
+  currentSession = sel.value;
+  sel.onchange = () => { currentSession = sel.value; apply(); };
+}
+
+async function apply() {
+  const params = new URLSearchParams();
+  const sig = document.getElementById("signal").value;
+  const mag = document.getElementById("minMag").value;
+  const dir = document.getElementById("dir").value;
+  const fol = document.getElementById("follower").value;
+  if (sig) params.set("signal", sig);
+  if (mag) params.set("min_mag", mag);
+  if (dir) params.set("direction", dir);
+  if (fol) params.set("follower", fol);
+  const events = await fetchJSON(`/api/sessions/${currentSession}/events?${params}`);
+  document.getElementById("summary").textContent = `${events.length} events`;
+  fillTable("#events", events, e => {
+    const a = linkTo("#", e.bin_idx);
+    a.onclick = ev => { ev.preventDefault(); showDetail(e.bin_idx); };
+    return [a, e.signal, e.direction, fmt(e.magnitude_sigma, 2),
+            e.leader, (e.lagging_followers || []).join(", "),
+            (e.lagging_followers || []).length];
+  });
+}
+
+async function showDetail(binIdx) {
+  const d = await fetchJSON(`/api/sessions/${currentSession}/event/${binIdx}`);
+  const e = d.event;
+  document.getElementById("detail").hidden = false;
+  const kv = document.getElementById("detailKv");
+  kv.innerHTML = "";
+  const add = (k, v) => {
+    kv.appendChild(el("div", { class: "k" }, [k]));
+    kv.appendChild(el("div", {}, [String(v)]));
+  };
+  add("bin_idx", e.bin_idx);
+  add("ts_ms", e.ts_ms);
+  add("signal", e.signal);
+  add("direction", e.direction);
+  add("magnitude_sigma", fmt(e.magnitude_sigma, 2));
+  add("leader", e.leader);
+  add("lagging_followers", (e.lagging_followers || []).join(", "));
+  const chart = document.getElementById("priceChart");
+  if (d.price_window && d.price_window.venues) {
+    const rel = d.price_window.rel_times_ms || [];
+    const traces = Object.entries(d.price_window.venues).map(([v, prices]) =>
+      ({ x: rel, y: prices, name: v, mode: "lines" }));
+    Plotly.newPlot(chart, traces,
+      { paper_bgcolor: "#0e1117", plot_bgcolor: "#0e1117",
+        font: { color: "#c9d1d9" }, margin: { t: 20 },
+        xaxis: { title: "rel ms" }, yaxis: { title: "price" } },
+      { displayModeBar: false });
+  } else {
+    chart.innerHTML = "<em>no price_window stored for this event</em>";
+  }
+}
+
+(async () => {
+  await loadSessions();
+  document.getElementById("apply").onclick = apply;
+  await apply();
+})();
+</script>
+</body>
+</html>

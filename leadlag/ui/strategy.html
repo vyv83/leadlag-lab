@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>leadlag — strategies</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>Strategies</h1>
+<nav>
+  <a href="dashboard.html">Dashboard</a>
+  <a href="explorer.html">Explorer</a>
+  <a href="strategy.html">Strategies</a>
+  <a href="backtest.html">Backtests</a>
+</nav>
+</header>
+<main>
+<section>
+  <h2>Available strategies (data/strategies/*.py)</h2>
+  <table id="strategies"><thead><tr>
+    <th>name</th><th>class</th><th>valid</th><th>description</th><th>params</th>
+  </tr></thead><tbody></tbody></table>
+</section>
+<section>
+  <h2>Run backtest</h2>
+  <div class="filters">
+    <label>Strategy <select id="strategy"></select></label>
+    <label>Session <select id="session"></select></label>
+    <label>params_override (JSON) <input id="override" style="width:360px" placeholder='{"hold_ms": 30000}'></label>
+    <button id="run">Run</button>
+  </div>
+  <div id="runResult"></div>
+</section>
+</main>
+<script src="app.js"></script>
+<script>
+(async () => {
+  const strats = await fetchJSON("/api/strategies");
+  fillTable("#strategies", strats, s => [
+    s.name, s.class_name || "—",
+    s.valid ? "yes" : `no (${s.error})`,
+    s.description || "—",
+    s.params ? JSON.stringify(s.params) : "—",
+  ]);
+  document.getElementById("strategy").innerHTML =
+    strats.filter(s => s.valid).map(s => `<option>${s.name}</option>`).join("");
+  const sessions = await fetchJSON("/api/sessions");
+  document.getElementById("session").innerHTML =
+    sessions.map(s => `<option>${s.id}</option>`).join("");
+
+  document.getElementById("run").onclick = async () => {
+    const body = {
+      strategy_name: document.getElementById("strategy").value,
+      session_id: document.getElementById("session").value,
+    };
+    const raw = document.getElementById("override").value.trim();
+    if (raw) { try { body.params_override = JSON.parse(raw); } catch { alert("bad JSON"); return; } }
+    const res = await apiFetch("/api/backtests/run", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    const out = await res.json();
+    document.getElementById("runResult").innerHTML =
+      res.ok ? `<p>Ran: <a href="backtest.html?id=${out.backtest_id}">${out.backtest_id}</a> — ${out.n_trades} trades</p>`
+             : `<pre>${JSON.stringify(out, null, 2)}</pre>`;
+  };
+})();
+</script>
+</body>
+</html>

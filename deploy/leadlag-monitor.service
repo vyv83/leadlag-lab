@@ -1,0 +1,15 @@
+[Unit]
+Description=leadlag-lab system monitor (.system_history.jsonl + .ping_cache.json)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/projects/leadlag-lab
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/root/projects/leadlag/.venv/bin/python -m leadlag.monitor.daemon
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

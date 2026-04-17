@@ -1,0 +1,163 @@
+# Venue registry — 12 exchanges (2 leaders + 10 followers).
+# This YAML mirrors leadlag/venues/parsers.py and plan.md §contract 3.
+# Parsers are referenced by name; actual callables live in leadlag/venues/parsers.py.
+
+venues:
+  - name: "OKX Perp"
+    role: leader
+    ws_url: "wss://ws.okx.com:8443/ws/v5/public"
+    parser: parse_okx_trade
+    bbo_parser: parse_okx_bbo
+    bbo_available: true
+    subscribe_msg: {op: subscribe, args: [{channel: trades, instId: BTC-USDT-SWAP}]}
+    bbo_subscribe_msg: {op: subscribe, args: [{channel: bbo-tbt, instId: BTC-USDT-SWAP}]}
+    keepalive: {type: text_ping, interval: 25}
+    taker_fee_bps: 5.0
+    maker_fee_bps: 2.0
+    contract_size: 1.0
+    enabled: true
+
+  - name: "Bybit Perp"
+    role: leader
+    ws_url: "wss://stream.bybit.com/v5/public/linear"
+    parser: parse_bybit_trade
+    bbo_parser: parse_bybit_bbo
+    bbo_available: true
+    subscribe_msg: {op: subscribe, args: ["publicTrade.BTCUSDT"]}
+    bbo_subscribe_msg: {op: subscribe, args: ["orderbook.1.BTCUSDT"]}
+    keepalive: {type: ws_ping, interval: 20}
+    taker_fee_bps: 5.5
+    maker_fee_bps: 2.0
+    contract_size: 1.0
+    enabled: true
+
+  - name: "Binance Perp"
+    role: follower
+    ws_url: "wss://fstream.binance.com/stream?streams=btcusdt@trade/btcusdt@bookTicker"
+    parser: parse_binance_trade
+    bbo_parser: parse_binance_bbo
+    bbo_available: true
+    subscribe_msg: null
+    taker_fee_bps: 4.5
+    maker_fee_bps: 2.0
+    contract_size: 1.0
+    enabled: true
+
+  - name: "Binance Spot"
+    role: follower
+    ws_url: "wss://stream.binance.com:9443/stream?streams=btcusdt@trade/btcusdt@bookTicker"
+    parser: parse_binance_trade
+    bbo_parser: parse_binance_bbo
+    bbo_available: true
+    subscribe_msg: null
+    taker_fee_bps: 10.0
+    maker_fee_bps: 6.0
+    contract_size: 1.0
+    enabled: true
+
+  - name: "Bybit Spot"
+    role: follower
+    ws_url: "wss://stream.bybit.com/v5/public/spot"
+    parser: parse_bybit_trade
+    bbo_parser: parse_bybit_bbo
+    bbo_available: true
+    subscribe_msg: {op: subscribe, args: ["publicTrade.BTCUSDT"]}
+    bbo_subscribe_msg: {op: subscribe, args: ["orderbook.1.BTCUSDT"]}
+    keepalive: {type: ws_ping, interval: 20}
+    taker_fee_bps: 10.0
+    maker_fee_bps: 6.0
+    contract_size: 1.0
+    enabled: true
+
+  - name: "MEXC Perp"
+    role: follower
+    ws_url: "wss://contract.mexc.com/edge"
+    parser: parse_mexc_trade
+    bbo_parser: null
+    bbo_available: false
+    subscribe_msg: {method: sub.deal, param: {symbol: BTC_USDT}}
+    keepalive: {type: json_ping, msg: {method: ping}, interval: 15}
+    taker_fee_bps: 2.0
+    maker_fee_bps: 0.0
+    contract_size: 0.0001
+    enabled: true
+
+  - name: "Bitget Perp"
+    role: follower
+    ws_url: "wss://ws.bitget.com/v2/ws/public"
+    parser: parse_bitget_trade
+    bbo_parser: parse_bitget_bbo
+    bbo_available: true
+    subscribe_msg: {op: subscribe, args: [{instType: USDT-FUTURES, channel: trade, instId: BTCUSDT}]}
+    bbo_subscribe_msg: {op: subscribe, args: [{instType: USDT-FUTURES, channel: books1, instId: BTCUSDT}]}
+    keepalive: {type: text_ping, interval: 30}
+    taker_fee_bps: 6.0
+    maker_fee_bps: 2.0
+    contract_size: 1.0
+    enabled: true
+
+  - name: "Gate Perp"
+    role: follower
+    ws_url: "wss://fx-ws.gateio.ws/v4/ws/usdt"
+    parser: parse_gate_trade
+    bbo_parser: null
+    bbo_available: false
+    subscribe_msg: DYNAMIC
+    subscribe_factory: make_gate_subscribe
+    keepalive: {type: json_ping, msg: {channel: futures.ping}, interval: 15}
+    taker_fee_bps: 5.0
+    maker_fee_bps: 2.0
+    contract_size: 0.0001
+    enabled: true
+
+  - name: "Hyperliquid Perp"
+    role: follower
+    ws_url: "wss://api.hyperliquid.xyz/ws"
+    parser: parse_hyperliquid_trade
+    bbo_parser: null
+    bbo_available: false
+    subscribe_msg: {method: subscribe, subscription: {type: trades, coin: BTC}}
+    taker_fee_bps: 3.5
+    maker_fee_bps: 1.0
+    contract_size: 1.0
+    enabled: true
+
+  - name: "Lighter Perp"
+    role: follower
+    ws_url: "wss://mainnet.zklighter.elliot.ai/stream"
+    parser: parse_lighter_trade
+    bbo_parser: parse_lighter_bbo
+    bbo_available: true
+    subscribe_msg: DYNAMIC
+    subscribe_factory: make_lighter_subscribe
+    keepalive: {type: ws_ping, interval: 60}
+    taker_fee_bps: 0.0
+    maker_fee_bps: 0.0
+    contract_size: 1.0
+    enabled: true
+
+  - name: "edgeX Perp"
+    role: follower
+    ws_url: "wss://quote.edgex.exchange/api/v1/public/ws"
+    parser: parse_edgex_trade
+    bbo_parser: parse_edgex_bbo
+    bbo_available: true
+    subscribe_msg: {type: subscribe, channel: "trades.10000001"}
+    bbo_subscribe_msg: {type: subscribe, channel: "bookTicker.all.1s"}
+    keepalive: {type: edgex_pong}
+    taker_fee_bps: 2.6
+    maker_fee_bps: 1.0
+    contract_size: 1.0
+    enabled: true
+
+  - name: "Aster Perp"
+    role: follower
+    ws_url: "wss://fstream.asterdex.com/ws/btcusdt@aggTrade/btcusdt@bookTicker"
+    parser: parse_aster_trade
+    bbo_parser: parse_aster_bbo
+    bbo_available: true
+    subscribe_msg: null
+    taker_fee_bps: 2.0
+    maker_fee_bps: 0.5
+    contract_size: 1.0
+    enabled: true

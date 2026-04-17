@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>leadlag-lab</title>
+<meta name="description" content="Local lead-lag crypto trading platform — collector, analysis, backtest, paper trading.">
+</head>
+<body>
+<p>Redirecting to leadlag-lab dashboard…</p>
+<script>
+(function () {
+  var base = window.location.origin + "/leadlag-lab/";
+  fetch(base, { method: "GET", signal: AbortSignal.timeout(3000) })
+    .then(function (r) {
+      if (r.ok || r.redirected) window.location.replace(base);
+      else throw new Error("not ok");
+    })
+    .catch(function () {
+      document.body.innerHTML =
+        '<p>leadlag-lab сервис не запущен</p>' +
+        '<p><a href="' + base + '">Попробовать открыть вручную</a></p>' +
+        '<p><small>systemctl start leadlag-lab</small></p>';
+    });
+})();
+</script>
+</body>
+</html>

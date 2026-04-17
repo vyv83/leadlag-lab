@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>leadlag — backtest</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+<header><h1>Backtest</h1>
+<nav>
+  <a href="dashboard.html">Dashboard</a>
+  <a href="explorer.html">Explorer</a>
+  <a href="strategy.html">Strategies</a>
+  <a href="backtest.html">Backtests</a>
+</nav>
+</header>
+<main>
+<section id="list" hidden>
+  <h2>All backtests</h2>
+  <table id="bts"><thead><tr>
+    <th>id</th><th>strategy</th><th>session</th><th>n_trades</th><th>net_bps</th><th>win</th><th>sharpe</th>
+  </tr></thead><tbody></tbody></table>
+</section>
+<section id="detail" hidden>
+  <h2 id="title"></h2>
+  <div class="kv" id="meta"></div>
+  <h2>Equity</h2>
+  <label><input id="layers" type="checkbox"> show layers (gross/post-fee/net)</label>
+  <div class="chart" id="equityChart"></div>
+  <h2>Stats</h2>
+  <pre id="stats"></pre>
+  <h2>Trades</h2>
+  <table id="trades"><thead><tr>
+    <th>id</th><th>bin</th><th>sig</th><th>venue</th><th>side</th><th>entry</th><th>exit</th>
+    <th>gross</th><th>fee</th><th>slip</th><th>net</th><th>reason</th><th>spread</th>
+  </tr></thead><tbody></tbody></table>
+</section>
+</main>
+<script src="app.js"></script>
+<script>
+(async () => {
+  const id = qs("id");
+  if (!id) {
+    document.getElementById("list").hidden = false;
+    const rows = await fetchJSON("/api/backtests");
+    fillTable("#bts", rows, r => [
+      linkTo(`backtest.html?id=${r.id}`, r.id), r.strategy, r.session_id,
+      r.n_trades, fmt(r.total_net_pnl_bps), pct(r.win_rate), fmt(r.sharpe),
+    ]);
+    return;
+  }
+  document.getElementById("detail").hidden = false;
+  const meta = await fetchJSON(`/api/backtests/${id}/meta`);
+  document.getElementById("title").textContent = `${meta.strategy_name || id}`;
+  const kv = document.getElementById("meta"); kv.innerHTML = "";
+  const add = (k, v) => { kv.appendChild(el("div",{class:"k"},[k])); kv.appendChild(el("div",{},[String(v ?? "—")])); };
+  add("session_id", meta.session_id);
+  add("created_at", meta.created_at);
+  add("slippage_model", meta.slippage_model);
+  add("position_mode", meta.position_mode);
+  add("params", JSON.stringify(meta.params || {}));
+
+  const stats = await fetchJSON(`/api/backtests/${id}/stats`);
+  document.getElementById("stats").textContent = JSON.stringify(stats, null, 2);
+
+  const equity = await fetchJSON(`/api/backtests/${id}/equity`);
+  const chart = document.getElementById("equityChart");
+  const drawEquity = () => {
+    const layers = document.getElementById("layers").checked;
+    const xs = equity.map(r => r.ts_ms);
+    const traces = [{x: xs, y: equity.map(r => r.net_equity_bps), name: "net", mode:"lines"}];
+    if (layers) {
+      traces.push({x: xs, y: equity.map(r => r.gross_equity_bps), name: "gross", mode:"lines"});
+      traces.push({x: xs, y: equity.map(r => r.post_fee_equity_bps), name: "post-fee", mode:"lines"});
+    }
+    Plotly.newPlot(chart, traces,
+      { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"},
+        margin:{t:20}, xaxis:{title:"ts_ms"}, yaxis:{title:"bps"} },
+      { displayModeBar:false });
+  };
+  drawEquity();
+  document.getElementById("layers").onchange = drawEquity;
+
+  const trades = await fetchJSON(`/api/backtests/${id}/trades`);
+  fillTable("#trades", trades, t => [
+    linkTo(`trade.html?backtest=${id}&trade=${t.trade_id}`, t.trade_id),
+    t.signal_bin_idx, t.signal_type, t.venue, t.side,
+    fmt(t.entry_price_exec, 4), fmt(t.exit_price_exec, 4),
+    fmt(t.gross_pnl_bps), fmt(t.fee_total_bps), fmt(t.slippage_total_bps),
+    fmt(t.net_pnl_bps), t.exit_reason, fmt(t.spread_at_entry_bps),
+  ]);
+})();
+</script>
+</body>
+</html>
