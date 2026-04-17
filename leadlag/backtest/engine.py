@@ -7,7 +7,7 @@ and emits a BacktestResult conforming to plan.md §contract 5.
 Key behaviours:
   - Position modes: 'reject' | 'stack' | 'reverse'
   - Slippage models: none | fixed | half_spread | full_spread (with fixed fallback)
-  - Fees: market = taker×2, limit = maker+taker (close at market)
+  - Fees: market = taker×2, limit = maker×2 (plan.md pre-Flutter contract)
   - Limit fills: must touch limit_price within LIMIT_FILL_WINDOW_PCT of hold_ms
   - MFE/MAE tracked in bps relative to exec entry price
 """
@@ -148,11 +148,11 @@ def run_backtest(
 
     events_sorted = sorted(session.events.rows, key=lambda e: e["bin_idx"])
 
-    position_mode = getattr(strategy, "position_mode", params.get("position_mode", "reject"))
+    position_mode = params.get("position_mode", getattr(strategy, "position_mode", "reject"))
     slippage_model = params.get("slippage_model", getattr(strategy, "slippage_model", "half_spread"))
     fixed_slippage = float(params.get("fixed_slippage_bps", getattr(strategy, "fixed_slippage_bps", 1.0)))
 
-    open_positions: dict[str, list[dict]] = {}  # venue -> list of {exit_bin_idx, side}
+    open_positions: dict[str, list[dict]] = {}  # venue -> list of {exit_bin_idx, side, trade}
     trades: list[dict] = []
     trade_id = 0
     n_errors = 0
@@ -189,6 +189,17 @@ def run_backtest(
                     if same_dir:
                         n_skipped_position += 1
                         continue
+                    for pos in open_on_venue:
+                        _force_close_trade(
+                            pos["trade"],
+                            forced_exit_bin=ev.bin_idx,
+                            exit_reason="reversed",
+                            vwap_df=vwap_df,
+                            bbo_lookup=bbo_lookup,
+                            bin_size_ms=bin_size_ms,
+                            slippage_model=slippage_model,
+                            fixed_slippage_bps=fixed_slippage,
+                        )
                     open_positions[order.venue] = []
                 # 'stack' appends independently.
 
@@ -213,7 +224,9 @@ def run_backtest(
             trades.append(trade)
             open_positions.setdefault(order.venue, []).append({
                 "exit_bin_idx": trade["_exit_bin_idx"],
+                "entry_bin_idx": trade["_entry_bin_idx"],
                 "side": order.side,
+                "trade": trade,
             })
             trade_id += 1
     finally:
@@ -221,6 +234,7 @@ def run_backtest(
 
     for t in trades:
         t.pop("_exit_bin_idx", None)
+        t.pop("_entry_bin_idx", None)
 
     equity = _build_equity(trades)
     stats = _build_stats(
@@ -471,8 +485,81 @@ def _simulate_trade(
         "bbo_available": bbo_available,
         "n_lagging_at_signal": len(event.lagging_followers),
         "leader_dev_sigma": event.extra.get("leader_dev_sigma", event.extra.get("leader_dev")),
+        "_entry_bin_idx": entry_bin,
         "_exit_bin_idx": exit_bin,
     }
+
+
+def _force_close_trade(
+    trade: dict,
+    *,
+    forced_exit_bin: int,
+    exit_reason: str,
+    vwap_df: pd.DataFrame,
+    bbo_lookup: _BboLookup,
+    bin_size_ms: int,
+    slippage_model: str,
+    fixed_slippage_bps: float,
+) -> None:
+    venue = trade["venue"]
+    entry_bin = int(trade.get("_entry_bin_idx", 0))
+    exit_bin = max(entry_bin, min(int(forced_exit_bin), len(vwap_df) - 1))
+    sign = 1 if trade.get("side") == "buy" else -1
+    is_limit = trade.get("entry_type") == "limit"
+    cfg = REGISTRY.get(venue)
+    taker = float(cfg.taker_fee_bps if cfg else 5.0)
+    maker = float(cfg.maker_fee_bps if cfg else 2.0)
+
+    mfe_bps, mae_bps = 0.0, 0.0
+    mfe_time_ms, mae_time_ms = 0, 0
+    entry_exec = float(trade["entry_price_exec"])
+    for b in range(entry_bin + 1, exit_bin + 1):
+        p = float(vwap_df[venue].iloc[b])
+        pnl_bps = sign * (p / entry_exec - 1.0) * 1e4
+        dt_ms = (b - entry_bin) * bin_size_ms
+        if pnl_bps > mfe_bps:
+            mfe_bps, mfe_time_ms = pnl_bps, dt_ms
+        if pnl_bps < mae_bps:
+            mae_bps, mae_time_ms = pnl_bps, dt_ms
+
+    exit_price_vwap = float(vwap_df[venue].iloc[exit_bin])
+    exit_ts_ms = _ts_at(vwap_df, exit_bin, int(trade["entry_ts_ms"]) + (exit_bin - entry_bin) * bin_size_ms)
+    bbo_exit = bbo_lookup.at(venue, exit_ts_ms)
+    spread_exit = bbo_exit["spread_bps"] if bbo_exit else None
+    slippage_exit_bps, slip_src_exit = compute_slippage_bps(
+        slippage_model, spread_exit, bbo_exit is not None and venue not in BBO_UNAVAILABLE_VENUES, fixed_slippage_bps,
+    )
+    exit_price_exec = exit_price_vwap * (1 - sign * slippage_exit_bps / 1e4)
+    fee_exit = maker if is_limit else taker
+    fee_type_exit = "maker" if is_limit else "taker"
+    fee_total = float(trade["fee_entry_bps"]) + fee_exit
+    slip_total = float(trade["slippage_entry_bps"]) + slippage_exit_bps
+    gross_pnl_bps = sign * (exit_price_vwap / float(trade["entry_price_vwap"]) - 1.0) * 1e4
+    net_pnl_bps = sign * (exit_price_exec / entry_exec - 1.0) * 1e4 - fee_total
+
+    trade.update({
+        "exit_ts_ms": exit_ts_ms,
+        "exit_time_utc": utc_from_ms(exit_ts_ms),
+        "exit_price_vwap": exit_price_vwap,
+        "exit_price_exec": exit_price_exec,
+        "slippage_exit_bps": slippage_exit_bps,
+        "slippage_total_bps": slip_total,
+        "slippage_source_exit": slip_src_exit,
+        "spread_at_exit_bps": spread_exit,
+        "gross_pnl_bps": gross_pnl_bps,
+        "fee_exit_bps": fee_exit,
+        "fee_total_bps": fee_total,
+        "fee_type_exit": fee_type_exit,
+        "net_pnl_bps": net_pnl_bps,
+        "hold_ms": (exit_bin - entry_bin) * bin_size_ms,
+        "exit_reason": exit_reason,
+        "mfe_bps": mfe_bps,
+        "mae_bps": mae_bps,
+        "mfe_time_ms": mfe_time_ms,
+        "mae_time_ms": mae_time_ms,
+        "bbo_spread_at_exit_bps": spread_exit,
+        "_exit_bin_idx": exit_bin,
+    })
 
 
 def _ts_at(vwap_df: pd.DataFrame, bin_idx: int, fallback: int) -> int:

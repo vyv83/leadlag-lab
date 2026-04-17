@@ -32,6 +32,8 @@
     <button id="stop">Stop</button>
     <button id="restart">Restart</button>
     <button id="refresh">Refresh Status</button>
+    <button id="clearStale" hidden>Clear stale status</button>
+    <button id="analyzeLatest">Analyze latest collection</button>
   </div>
   <div class="kv" id="status"></div>
 </section>
@@ -75,6 +77,7 @@
 <script>
 let venues = [];
 let statusPayload = {};
+let collections = [];
 let showUrls = false;
 
 async function loadVenues() {
@@ -95,12 +98,14 @@ async function loadVenues() {
 }
 
 async function refresh() {
-  const [st, log, files] = await Promise.all([
+  const [st, log, files, rawCollections] = await Promise.all([
     fetchJSON("/api/collector/status"),
     fetchJSON(logUrl()),
     fetchJSON("/api/collector/files"),
+    fetchJSON("/api/collections"),
   ]);
   statusPayload = st;
+  collections = rawCollections;
   renderStatus(st);
   renderLive(st);
   renderLog(log);
@@ -116,15 +121,20 @@ function renderStatus(st) {
     ["session id", st.session_id || "—"],
     ["started UTC", utc(st.start_time)],
     ["planned", `${fmt(st.planned_duration_s, 0)}s`],
+    ["rotation", `${fmt(st.rotation_s, 0)}s`],
+    ["bin size", `${fmt(st.bin_size_ms, 0)}ms`],
     ["updated UTC", utc(st.updated_at_ms)],
+    ["state", st.stale ? "stale" : (st.running ? "running" : "stopped")],
   ];
   rows.forEach(([k, v]) => { kv.appendChild(el("div", {class:"k"}, [k])); kv.appendChild(el("div", {}, [String(v)])); });
   document.getElementById("start").disabled = !!st.running;
-  document.getElementById("stop").disabled = !st.running;
+  document.getElementById("stop").disabled = !st.running && !st.proc_alive;
+  document.getElementById("clearStale").hidden = !st.stale;
+  document.getElementById("analyzeLatest").disabled = !collections.length;
 }
 function renderLive(st) {
   fillTable("#live", st.venues || [], r => [
-    r.name, r.role, r.status, r.ticks, fmt(r.ticks_per_s_1m), fmt(r.ticks_per_s_10m),
+    r.name, r.role, statusPayload.stale ? `stale (${r.status})` : r.status, r.ticks, fmt(r.ticks_per_s_1m), fmt(r.ticks_per_s_10m),
     r.bbo, fmt(r.bbo_per_s), r.reconnects, r.last_reconnect_utc || "—", utc(r.last_tick_ts),
     fmt(r.seconds_since_last_tick), fmt(r.last_price, 2), fmt(r.median_price, 2), r.last_error || "", fmt(r.uptime_pct),
   ]);
@@ -179,6 +189,7 @@ document.getElementById("selectAll").onclick = () => setChecks(() => true);
 document.getElementById("clearSelection").onclick = () => setChecks(() => false);
 document.getElementById("toggleUrls").onclick = () => { showUrls = !showUrls; setUrlVisibility(); };
 document.getElementById("refresh").onclick = refresh;
+document.getElementById("clearStale").onclick = async () => { await postJSON("/api/collector/clear-stale", {}); refresh(); };
 document.getElementById("logVenue").onchange = refresh;
 document.getElementById("logType").onchange = refresh;
 document.getElementById("start").onclick = async () => {
@@ -193,8 +204,20 @@ document.getElementById("start").onclick = async () => {
 document.getElementById("stop").onclick = async () => { await postJSON("/api/collector/stop", {}); refresh(); };
 document.getElementById("restart").onclick = async () => {
   await postJSON("/api/collector/stop", {});
-  await postJSON("/api/collector/start", { duration_s: Math.round(Number(document.getElementById("durationHours").value || 1) * 3600), venues: selectedVenues() });
+  await postJSON("/api/collector/start", {
+    duration_s: Math.round(Number(document.getElementById("durationHours").value || 1) * 3600),
+    venues: selectedVenues(),
+    bin_size_ms: Number(document.getElementById("binSize").value || 50),
+    rotation_s: Number(document.getElementById("rotation").value || 30) * 60,
+  });
   refresh();
+};
+document.getElementById("analyzeLatest").onclick = async () => {
+  if (!collections.length) return;
+  const res = await postJSON(`/api/collections/${collections[0].id}/analyze`, {
+    params: { bin_size_ms: Number(document.getElementById("binSize").value || 50) }
+  });
+  location.href = `explorer.html?session=${res.session_id}`;
 };
 
 (async () => {

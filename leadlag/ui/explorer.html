@@ -37,7 +37,8 @@
       <option value="1">UP</option>
       <option value="-1">DOWN</option>
     </select></label>
-    <label>Follower <select id="follower"></select></label>
+    <label>Filter follower <select id="filterFollower"><option value="">All</option></select></label>
+    <label>Chart follower <select id="chartFollower"></select></label>
     <label>Min σ <input id="minMag" type="number" step="0.1" placeholder="0.0"></label>
     <label>Min lagging <input id="minLagging" type="number" min="1" step="1" placeholder="1"></label>
     <label>UTC from <input id="timeFrom" type="time"></label>
@@ -125,7 +126,7 @@ async function loadSession(sessionId) {
     document.getElementById("openTrade").href = `trade.html?backtest=${btParam}&trade=${tradeParam}`;
     document.getElementById("viewBacktest").hidden = false;
     document.getElementById("viewBacktest").href = `backtest.html?id=${btParam}`;
-    document.getElementById("follower").value = tradeDetail.trade.venue;
+    document.getElementById("chartFollower").value = tradeDetail.trade.venue;
   }
   applyFilters();
   const eventParam = qs("event") || (tradeDetail && tradeDetail.trade.signal_bin_idx);
@@ -135,17 +136,21 @@ async function loadSession(sessionId) {
 }
 
 function fillFollowerOptions() {
-  const followerSel = document.getElementById("follower");
+  const chartSel = document.getElementById("chartFollower");
+  const filterSel = document.getElementById("filterFollower");
   const followers = meta.followers || [];
-  const current = followerSel.value || qs("follower") || (followers[0] || "");
-  followerSel.innerHTML = followers.map(v => `<option value="${v}">${v}</option>`).join("");
-  if (followers.includes(current)) followerSel.value = current;
+  const currentChart = chartSel.value || qs("chart_follower") || qs("follower") || (followers[0] || "");
+  const currentFilter = filterSel.value || qs("filter_follower") || "";
+  chartSel.innerHTML = followers.map(v => `<option value="${v}">${v}</option>`).join("");
+  filterSel.innerHTML = `<option value="">All</option>` + followers.map(v => `<option value="${v}">${v}</option>`).join("");
+  if (followers.includes(currentChart)) chartSel.value = currentChart;
+  if (followers.includes(currentFilter)) filterSel.value = currentFilter;
 }
 
 function applyFilters() {
   const dir = document.getElementById("direction").value;
   const leaderMode = document.getElementById("leaderMode").value;
-  const follower = document.getElementById("follower").value;
+  const follower = document.getElementById("filterFollower").value;
   const minMag = Number(document.getElementById("minMag").value || 0);
   const minLag = Number(document.getElementById("minLagging").value || 0);
   const from = document.getElementById("timeFrom").value;
@@ -157,8 +162,9 @@ function applyFilters() {
     if (minLag && Number(e.n_lagging || (e.lagging_followers || []).length) < minLag) return false;
     if (follower && !(e.lagging_followers || []).includes(follower)) return false;
     if (leaderMode === "confirmed" && e.signal !== "C") return false;
-    if (leaderMode === "okx" && !["OKX Perp", "confirmed"].includes(e.leader) && e.anchor_leader !== "OKX Perp") return false;
-    if (leaderMode === "bybit" && !["Bybit Perp", "confirmed"].includes(e.leader) && e.anchor_leader !== "Bybit Perp") return false;
+    const actualLeader = e.anchor_leader || e.leader;
+    if (leaderMode === "okx" && actualLeader !== "OKX Perp") return false;
+    if (leaderMode === "bybit" && actualLeader !== "Bybit Perp") return false;
     const hhmm = utc(e.ts_ms).slice(0, 5);
     if (from && hhmm < from) return false;
     if (to && hhmm > to) return false;
@@ -232,7 +238,7 @@ function renderChart() {
       line: { width: selectedEvent.anchor_leader === venue ? 3 : 2 },
     });
   });
-  const follower = document.getElementById("follower").value;
+  const follower = document.getElementById("chartFollower").value;
   addFollowerTrace(traces, priceWindow, rel, follower, { width: 3, color: "#3fb950" });
   if (document.getElementById("showAllFollowers").checked) {
     (meta.followers || []).forEach(v => {
@@ -337,10 +343,9 @@ function renderFollowersTable() {
   });
   document.querySelectorAll("#followers tbody tr").forEach((tr, i) => {
     const venue = followers[i];
-    tr.classList.toggle("selected", venue === document.getElementById("follower").value);
+    tr.classList.toggle("selected", venue === document.getElementById("chartFollower").value);
     tr.onclick = () => {
-      document.getElementById("follower").value = venue;
-      applyFilters();
+      document.getElementById("chartFollower").value = venue;
       renderChart();
       renderFollowersTable();
     };
@@ -382,13 +387,17 @@ document.querySelectorAll("[data-group='signal']").forEach(btn => {
     if (filteredEvents.length) selectEvent(filteredEvents[0].bin_idx);
   };
 });
-["leaderMode", "direction", "follower", "minMag", "minLagging", "timeFrom", "timeTo", "sortBy"].forEach(id => {
+["leaderMode", "direction", "filterFollower", "minMag", "minLagging", "timeFrom", "timeTo", "sortBy"].forEach(id => {
   document.getElementById(id).onchange = () => {
     applyFilters();
     if (selectedEvent) renderChart();
     if (selectedEvent) renderFollowersTable();
   };
 });
+document.getElementById("chartFollower").onchange = () => {
+  if (selectedEvent) renderChart();
+  if (selectedEvent) renderFollowersTable();
+};
 document.getElementById("showBbo").onchange = renderChart;
 document.getElementById("showAllFollowers").onchange = renderChart;
 document.getElementById("prevEvent").onclick = () => moveEvent(-1);
@@ -396,11 +405,13 @@ document.getElementById("nextEvent").onclick = () => moveEvent(1);
 document.getElementById("reset").onclick = () => {
   currentSignal = "";
   setActiveButton("signal", "");
-  ["leaderMode", "direction", "minMag", "minLagging", "timeFrom", "timeTo"].forEach(id => document.getElementById(id).value = "");
+  ["leaderMode", "direction", "filterFollower", "minMag", "minLagging", "timeFrom", "timeTo"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("sortBy").value = "time";
   applyFilters();
 };
 document.addEventListener("keydown", ev => {
+  const tag = (ev.target && ev.target.tagName || "").toLowerCase();
+  if (["input", "select", "textarea"].includes(tag) || (ev.target && ev.target.isContentEditable)) return;
   if (["ArrowDown", "ArrowRight"].includes(ev.key)) moveEvent(1);
   if (["ArrowUp", "ArrowLeft"].includes(ev.key)) moveEvent(-1);
 });

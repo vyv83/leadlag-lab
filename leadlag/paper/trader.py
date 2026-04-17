@@ -45,6 +45,7 @@ class _OpenPosition:
     slippage_source_entry: str
     spread_at_entry_bps: Optional[float]
     bbo_available: bool
+    entry_type: str
     fee_type: str
     fee_entry_bps: float
     signal_bin_idx: int
@@ -120,8 +121,10 @@ class PaperTrader:
             self._append_signal(ev, action="skip", skip_reason="strategy_returned_none")
             return
 
-        position_mode = getattr(self.strategy, "position_mode",
-                                 self.strategy.params.get("position_mode", "reject"))
+        position_mode = self.strategy.params.get(
+            "position_mode",
+            getattr(self.strategy, "position_mode", "reject"),
+        )
         if self.open.get(order.venue):
             if position_mode == "reject":
                 self._append_signal(ev, action="skip", skip_reason="position_already_open", order=order)
@@ -162,6 +165,7 @@ class PaperTrader:
             stop_loss_bps=order.stop_loss_bps, take_profit_bps=order.take_profit_bps,
             slippage_entry_bps=slip_bps, slippage_source_entry=slip_src,
             spread_at_entry_bps=spread, bbo_available=avail,
+            entry_type=order.entry_type,
             fee_type=fee_type, fee_entry_bps=fee_entry,
             signal_bin_idx=ev.bin_idx, signal_type=ev.signal,
             direction=ev.direction, magnitude_sigma=ev.magnitude_sigma,
@@ -221,7 +225,9 @@ class PaperTrader:
         exit_exec = exit_price_vwap * (1 - sign * slip_exit / 1e4)
         cfg = REGISTRY.get(p.venue)
         taker = float(cfg.taker_fee_bps) if cfg else 5.0
-        fee_exit = taker  # close at market
+        maker = float(cfg.maker_fee_bps) if cfg else 2.0
+        fee_exit = maker if p.entry_type == "limit" else taker
+        fee_type_exit = "maker" if p.entry_type == "limit" else "taker"
         gross_bps = sign * (exit_price_vwap / p.entry_price_vwap - 1.0) * 1e4
         fee_total = p.fee_entry_bps + fee_exit
         slip_total = p.slippage_entry_bps + slip_exit
@@ -231,7 +237,7 @@ class PaperTrader:
             "trade_id": p.trade_id, "signal_bin_idx": p.signal_bin_idx,
             "signal_type": p.signal_type, "direction": p.direction,
             "magnitude_sigma": p.magnitude_sigma, "venue": p.venue, "side": p.side,
-            "entry_type": "market",
+            "entry_type": p.entry_type,
             "entry_ts_ms": p.entry_ts_ms, "exit_ts_ms": now_ms,
             "entry_time_utc": utc_from_ms(p.entry_ts_ms), "exit_time_utc": utc_from_ms(now_ms),
             "entry_price_vwap": p.entry_price_vwap, "exit_price_vwap": exit_price_vwap,
@@ -244,7 +250,7 @@ class PaperTrader:
             "spread_at_entry_bps": p.spread_at_entry_bps, "spread_at_exit_bps": spread_exit,
             "gross_pnl_bps": gross_bps,
             "fee_entry_bps": p.fee_entry_bps, "fee_exit_bps": fee_exit, "fee_total_bps": fee_total,
-            "fee_type_entry": p.fee_type, "fee_type_exit": "taker",
+            "fee_type_entry": p.fee_type, "fee_type_exit": fee_type_exit,
             "fee_type": p.fee_type, "net_pnl_bps": net_bps,
             "hold_ms": now_ms - p.entry_ts_ms, "planned_hold_ms": p.hold_ms,
             "exit_reason": exit_reason,
@@ -294,8 +300,10 @@ class PaperTrader:
             "strategy_name": self.name,
             "started_at_ms": self.started_at_ms,
             "venues_monitored": venues,
-            "position_mode": getattr(self.strategy, "position_mode",
-                                      self.strategy.params.get("position_mode", "reject")),
+            "position_mode": self.strategy.params.get(
+                "position_mode",
+                getattr(self.strategy, "position_mode", "reject"),
+            ),
             "params": self.strategy.params,
         }, indent=2))
 

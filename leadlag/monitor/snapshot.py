@@ -60,7 +60,7 @@ def read_history(data_dir: Path | str = "data", minutes: int = 60) -> list[dict]
                 continue
             if int(r.get("ts", 0)) >= cutoff_ms:
                 rows.append(r)
-    return rows
+    return _with_network_rates(rows)
 
 
 def read_pings(data_dir: Path | str = "data") -> dict:
@@ -73,14 +73,35 @@ def read_pings(data_dir: Path | str = "data") -> dict:
         return {"ts": None, "venues": {}}
 
 
-def read_collector_status(data_dir: Path | str = "data") -> dict:
+def read_collector_status(data_dir: Path | str = "data", stale_after_s: int = 30) -> dict:
     p = Path(data_dir) / ".collector_status.json"
     if not p.exists():
-        return {"running": False}
+        return {"running": False, "running_effective": False, "stale": False}
     try:
-        return json.loads(p.read_text())
+        st = json.loads(p.read_text())
     except Exception:
-        return {"running": False}
+        return {"running": False, "running_effective": False, "stale": False}
+    now_ms = int(time.time() * 1000)
+    updated = st.get("updated_at_ms")
+    if updated is None:
+        try:
+            updated = int(p.stat().st_mtime * 1000)
+        except OSError:
+            updated = None
+    age_s = ((now_ms - int(updated)) / 1000.0) if updated else None
+    file_running = bool(st.get("running"))
+    stale = bool(file_running and age_s is not None and age_s > stale_after_s)
+    st["file_running"] = file_running
+    st["stale"] = stale
+    st["status_age_s"] = age_s
+    st["stale_after_s"] = stale_after_s
+    st["running_effective"] = bool(file_running and not stale)
+    if stale:
+        st["running"] = False
+        st["status"] = "stale"
+    else:
+        st["running"] = st["running_effective"]
+    return st
 
 
 def list_data_files(data_dir: Path | str = "data") -> list[dict]:
@@ -181,3 +202,21 @@ def _dir_size(path: Path) -> int:
             except OSError:
                 pass
     return total
+
+
+def _with_network_rates(rows: list[dict]) -> list[dict]:
+    prev: dict | None = None
+    out: list[dict] = []
+    for row in rows:
+        r = dict(row)
+        if "net_down_bps" not in r or "net_up_bps" not in r:
+            if prev and r.get("net_recv") is not None and prev.get("net_recv") is not None:
+                dt = max(0.001, (int(r.get("ts", 0)) - int(prev.get("ts", 0))) / 1000.0)
+                r["net_down_bps"] = max(0.0, (float(r.get("net_recv", 0)) - float(prev.get("net_recv", 0))) / dt)
+                r["net_up_bps"] = max(0.0, (float(r.get("net_sent", 0)) - float(prev.get("net_sent", 0))) / dt)
+            else:
+                r.setdefault("net_down_bps", 0.0)
+                r.setdefault("net_up_bps", 0.0)
+        prev = r
+        out.append(r)
+    return out

@@ -49,13 +49,26 @@ async def _history_loop(data_dir: Path) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     hist_path = data_dir / ".system_history.jsonl"
     last_trim = time.time()
+    last_net: tuple[int, int, int] | None = None
     while True:
         s = system_stats()
+        net_sent = int(s["net_bytes_sent"])
+        net_recv = int(s["net_bytes_recv"])
+        if last_net is None:
+            net_up_bps = 0.0
+            net_down_bps = 0.0
+        else:
+            prev_ts, prev_sent, prev_recv = last_net
+            dt = max(0.001, (int(s["ts"]) - prev_ts) / 1000.0)
+            net_up_bps = max(0.0, (net_sent - prev_sent) / dt)
+            net_down_bps = max(0.0, (net_recv - prev_recv) / dt)
+        last_net = (int(s["ts"]), net_sent, net_recv)
         with hist_path.open("a") as f:
             f.write(json.dumps({
                 "ts": s["ts"], "cpu_pct": s["cpu_percent"],
                 "ram_used_gb": s["ram_used_gb"], "disk_used_gb": s["disk_used_gb"],
-                "net_sent": s["net_bytes_sent"], "net_recv": s["net_bytes_recv"],
+                "net_sent": net_sent, "net_recv": net_recv,
+                "net_up_bps": net_up_bps, "net_down_bps": net_down_bps,
             }) + "\n")
         if time.time() - last_trim > 600:  # trim every 10min
             _trim_history(hist_path)

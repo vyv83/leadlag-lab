@@ -39,8 +39,16 @@ async def run(strategy_path: str, data_dir: Path, duration_s: int | None = None)
             pass
 
     collector = read_collector_status(data_dir)
-    if collector.get("running"):
-        _write_daemon_status(data_dir, strategy, venues, mode="collector_ipc_pending", running=True)
+    if collector.get("running_effective", collector.get("running")):
+        _write_daemon_status(
+            data_dir,
+            strategy,
+            venues,
+            mode="collector_ipc_pending",
+            running=False,
+            blocked=True,
+            blocked_reason="collector_ipc_not_implemented",
+        )
         try:
             await _sleep_until_stop(stop_event, duration_s)
         finally:
@@ -118,12 +126,26 @@ def _strategy_followers(strategy) -> list[str]:
     return [name for name, cfg in REGISTRY.items() if cfg.role == "follower"]
 
 
-def _write_daemon_status(data_dir: Path, strategy, venues: list[str], *, mode: str, running: bool) -> None:
+def _write_daemon_status(
+    data_dir: Path,
+    strategy,
+    venues: list[str],
+    *,
+    mode: str,
+    running: bool,
+    blocked: bool = False,
+    blocked_reason: str | None = None,
+) -> None:
     now = int(time.time() * 1000)
     payload = {
         "running": running,
         "strategy": getattr(strategy, "name", Path(str(strategy)).stem),
         "mode": mode,
+        "blocked": blocked,
+        "blocked_reason": blocked_reason,
+        "can_trade": bool(running and not blocked),
+        "signal_c_supported": False,
+        "supported_signal_modes": ["A"],
         "started_at_ms": now if running else None,
         "started_at_utc": utc_from_ms(now) if running else None,
         "uptime_s": 0,

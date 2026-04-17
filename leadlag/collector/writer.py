@@ -26,6 +26,7 @@ async def writer_task(
     prefix: str,
     schema: pa.Schema,
     data_dir: Path | str = "data",
+    rotation_s: int = ROTATION_INTERVAL_SEC,
 ) -> None:
     buffer: list[dict] = []
     last_rotate = time.time()
@@ -72,7 +73,7 @@ async def writer_task(
                 buffer.append(item)
             except asyncio.TimeoutError:
                 pass
-            if time.time() - last_rotate >= ROTATION_INTERVAL_SEC:
+            if time.time() - last_rotate >= max(1, int(rotation_s)):
                 flush()
     finally:
         flush()

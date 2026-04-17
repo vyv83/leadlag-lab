@@ -175,6 +175,9 @@ async def run_collector(
     collect_seconds: int,
     venues_filter: list[str] | None = None,
     data_dir: Path | str = "data",
+    *,
+    rotation_s: int = 1800,
+    bin_size_ms: int = 50,
 ) -> dict:
     stats: dict = {}
     data_dir = Path(data_dir)
@@ -191,18 +194,24 @@ async def run_collector(
         asyncio.create_task(_ws_venue_task(cfg, trades_q, bbo_q, stop_event, stats, data_dir))
         for cfg in active.values()
     ]
-    t_writer = asyncio.create_task(writer_task(trades_q, stop_event, "ticks", TICK_SCHEMA, data_dir))
-    b_writer = asyncio.create_task(writer_task(bbo_q, stop_event, "bbo", BBO_SCHEMA, data_dir))
+    t_writer = asyncio.create_task(writer_task(trades_q, stop_event, "ticks", TICK_SCHEMA, data_dir, rotation_s=rotation_s))
+    b_writer = asyncio.create_task(writer_task(bbo_q, stop_event, "bbo", BBO_SCHEMA, data_dir, rotation_s=rotation_s))
 
     try:
         deadline = time.time() + collect_seconds
         _append_log(data_dir, "collector", "started", f"session_id={session_id}, venues={','.join(active)}")
         while time.time() < deadline:
-            _write_status(data_dir, session_id, start_ts_ms, collect_seconds, active, stats, running=True)
+            _write_status(
+                data_dir, session_id, start_ts_ms, collect_seconds, active, stats,
+                running=True, rotation_s=rotation_s, bin_size_ms=bin_size_ms,
+            )
             await asyncio.sleep(2)
     finally:
         stop_event.set()
-        _write_status(data_dir, session_id, start_ts_ms, collect_seconds, active, stats, running=False)
+        _write_status(
+            data_dir, session_id, start_ts_ms, collect_seconds, active, stats,
+            running=False, rotation_s=rotation_s, bin_size_ms=bin_size_ms,
+        )
         _append_log(data_dir, "collector", "stopping", f"session_id={session_id}")
         await asyncio.sleep(1)
         for t in ws_tasks:
@@ -221,6 +230,8 @@ def _write_status(
     stats: dict,
     *,
     running: bool,
+    rotation_s: int = 1800,
+    bin_size_ms: int = 50,
 ) -> None:
     now_ms = int(time.time() * 1000)
     venues = []
@@ -230,10 +241,27 @@ def _write_status(
         bbo = int(row.get("bbo", 0))
         elapsed = max(1.0, (now_ms - start_ts_ms) / 1000.0)
         last_tick = row.get("last_tick_ts")
+        seconds_idle = ((now_ms - int(last_tick)) / 1000.0) if last_tick else None
+        raw_status = row.get("status", "disabled")
+        status = raw_status
+        severity = "ok"
+        if raw_status == "ok" and running:
+            if ticks == 0 and elapsed >= 60.0:
+                status = "connected_no_data"
+                severity = "warning"
+            elif seconds_idle is not None and seconds_idle >= 60.0:
+                status = "connected_no_data"
+                severity = "warning"
+        if raw_status in {"connecting", "reconnecting"}:
+            severity = "warning"
+        if raw_status not in {"ok", "connecting", "reconnecting"}:
+            severity = "error" if raw_status not in {"disabled"} else "muted"
         venues.append({
             "name": name,
             "role": cfg.role,
-            "status": row.get("status", "disabled"),
+            "status": status,
+            "raw_status": raw_status,
+            "severity": severity,
             "ticks": ticks,
             "ticks_per_s_1m": ticks / elapsed,
             "ticks_per_s_10m": ticks / elapsed,
@@ -242,7 +270,7 @@ def _write_status(
             "reconnects": int(row.get("reconnects", 0)),
             "last_reconnect_utc": row.get("last_reconnect_utc"),
             "last_tick_ts": last_tick,
-            "seconds_since_last_tick": ((now_ms - int(last_tick)) / 1000.0) if last_tick else None,
+            "seconds_since_last_tick": seconds_idle,
             "last_price": row.get("last_price"),
             "median_price": row.get("last_price"),
             "last_error": row.get("last_error"),
@@ -253,10 +281,14 @@ def _write_status(
         })
     _atomic_json(data_dir / ".collector_status.json", {
         "running": running,
+        "running_effective": running,
+        "stale": False,
         "session_id": session_id,
         "start_time": start_ts_ms,
         "start_time_utc": datetime.fromtimestamp(start_ts_ms / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
         "planned_duration_s": planned_duration_s,
+        "rotation_s": int(rotation_s),
+        "bin_size_ms": int(bin_size_ms),
         "updated_at_ms": now_ms,
         "updated_at_utc": _utc_now(),
         "venues": venues,

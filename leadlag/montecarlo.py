@@ -26,6 +26,10 @@ class MonteCarloResult:
     sim_final_pnls: list[float]
     sim_sharpes: list[float]
     sim_max_dds: list[float]
+    n_trades: int = 0
+    real_sharpe: float = 0.0
+    real_max_dd: float = 0.0
+    warnings: list[str] | None = None
 
     def summary(self) -> dict:
         return {
@@ -36,6 +40,10 @@ class MonteCarloResult:
             "pnl_5th": self.pnl_5th,
             "pnl_95th": self.pnl_95th,
             "prob_of_profit": self.prob_of_profit,
+            "n_trades": self.n_trades,
+            "real_sharpe": self.real_sharpe,
+            "real_max_dd": self.real_max_dd,
+            "warnings": self.warnings or [],
         }
 
     def to_dict(self) -> dict:
@@ -60,7 +68,7 @@ def run_monte_carlo(
     result: Any,
     n: int = 10_000,
     *,
-    method: str = "trade_shuffle",
+    method: str = "bootstrap",
     block_size: int = 10,
     seed: int | None = 42,
     keep_curves: int = 1_000,
@@ -78,6 +86,12 @@ def run_monte_carlo(
     if n <= 0:
         raise ValueError("n must be positive")
 
+    warnings: list[str] = []
+    if len(returns) < 20:
+        warnings.append("n_trades_lt_20_monte_carlo_is_low_confidence")
+    if method in {"trade_shuffle", "return_shuffle"}:
+        warnings.append("shuffle_preserves_final_pnl_use_for_order_drawdown_not_edge_significance")
+
     if len(returns) == 0:
         sims = np.zeros((n, 0), dtype=float)
     else:
@@ -87,6 +101,9 @@ def run_monte_carlo(
     sharpes = np.array([_sharpe(row) for row in sims])
     max_dds = np.array([_max_drawdown(row.cumsum()) for row in sims]) if sims.size else np.zeros(n)
     real_pnl = float(returns.sum()) if len(returns) else 0.0
+    real_equity = returns.cumsum() if len(returns) else np.array([], dtype=float)
+    real_sharpe = _sharpe(returns) if len(returns) else 0.0
+    real_max_dd = _max_drawdown(real_equity) if len(returns) else 0.0
     real_rank = float((finals <= real_pnl).mean() * 100.0) if len(finals) else 0.0
     p_value = float((finals >= real_pnl).mean()) if len(finals) else 1.0
     sample_n = min(int(keep_curves), n)
@@ -110,10 +127,16 @@ def run_monte_carlo(
         sim_final_pnls=finals.round(6).tolist(),
         sim_sharpes=sharpes.round(6).tolist(),
         sim_max_dds=max_dds.round(6).tolist(),
+        n_trades=int(len(returns)),
+        real_sharpe=real_sharpe,
+        real_max_dd=real_max_dd,
+        warnings=warnings,
     )
 
 
 def _simulate_returns(returns: np.ndarray, n: int, method: str, block_size: int, rng: np.random.Generator) -> np.ndarray:
+    if method in {"bootstrap", "return_bootstrap"}:
+        return rng.choice(returns, size=(n, len(returns)), replace=True)
     if method in {"trade_shuffle", "return_shuffle"}:
         return np.array([rng.permutation(returns) for _ in range(n)])
     if method == "block_bootstrap":

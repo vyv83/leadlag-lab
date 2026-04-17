@@ -115,8 +115,8 @@ function renderMetrics() {
     ["Fee total", `${fmt(t.fee_total_bps)} bps`],
     ["Gross PnL", `${signed(Number(t.gross_pnl_bps))} bps`],
     ["Net PnL", `${signed(Number(t.net_pnl_bps))} bps`],
-    ["MFE", `${signed(Number(t.mfe_bps))} bps @ ${fmt(t.mfe_time_ms, 0)} ms`],
-    ["MAE", `${signed(Number(t.mae_bps))} bps @ ${fmt(t.mae_time_ms, 0)} ms`],
+    ["MFE", excursionText(t.mfe_bps, t.mfe_time_ms)],
+    ["MAE", excursionText(t.mae_bps, t.mae_time_ms)],
     ["Spread entry", t.spread_at_entry_bps === null ? "N/A" : `${fmt(t.spread_at_entry_bps)} bps`],
     ["Spread exit", t.spread_at_exit_bps === null ? "N/A" : `${fmt(t.spread_at_exit_bps)} bps`],
     ["BBO available", t.bbo_available ? "yes" : "no"],
@@ -164,8 +164,8 @@ function renderChart() {
   shapes.push({ type: "rect", xref: "x", yref: "paper", x0: entryRel, x1: exitRel, y0: 0, y1: 0.42, fillcolor: Number(t.net_pnl_bps) >= 0 ? "rgba(63,185,80,0.12)" : "rgba(248,81,73,0.12)", line: { width: 0 } });
   annotations.push(label(entryRel, `ENTRY VWAP ${fmt(t.entry_price_vwap, 2)} / Exec ${fmt(t.entry_price_exec, 2)}`));
   annotations.push(label(exitRel, `EXIT ${fmt(t.exit_price_exec, 2)} - ${t.exit_reason}`));
-  annotations.push(label(entryRel + Number(t.mfe_time_ms || 0), `MFE ${signed(Number(t.mfe_bps))}`));
-  annotations.push(label(entryRel + Number(t.mae_time_ms || 0), `MAE ${signed(Number(t.mae_bps))}`));
+  if (hasExcursion(t.mfe_bps, t.mfe_time_ms)) annotations.push(label(entryRel + Number(t.mfe_time_ms), `MFE ${signed(Number(t.mfe_bps))}`));
+  if (hasExcursion(t.mae_bps, t.mae_time_ms)) annotations.push(label(entryRel + Number(t.mae_time_ms), `MAE ${signed(Number(t.mae_bps))}`));
   if (t.stop_loss_bps !== null && t.stop_loss_bps !== undefined) {
     annotations.push(label(entryRel, `SL ${fmt(t.stop_loss_bps)} bps`));
   }
@@ -223,6 +223,12 @@ function vline(x, color, dash) {
 }
 function label(x, text) {
   return { x, y: 1.0, xref: "x", yref: "paper", text, showarrow: false, yanchor: "bottom", font: { size: 11 } };
+}
+function hasExcursion(value, timeMs) {
+  return Number.isFinite(Number(value)) && Number.isFinite(Number(timeMs)) && !(Number(value) === 0 && Number(timeMs) === 0);
+}
+function excursionText(value, timeMs) {
+  return hasExcursion(value, timeMs) ? `${signed(Number(value))} bps @ ${fmt(Number(timeMs), 0)} ms` : "—";
 }
 
 document.getElementById("toggleBbo").onchange = () => payload && renderChart();

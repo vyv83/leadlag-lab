@@ -48,6 +48,8 @@
   <div class="toolbar">
     <button id="startCollector">Start Collection</button>
     <button id="stopCollector">Stop Collector</button>
+    <button id="clearStale" hidden>Clear stale status</button>
+    <button id="runAnalysisLatest">Run Analysis</button>
     <a class="button-link" href="collector.html">Open Collector</a>
     <a id="openLatest" class="button-link" href="explorer.html">Open Latest Session</a>
     <a class="button-link" href="http://127.0.0.1:8888" target="_blank">Open Jupyter</a>
@@ -59,6 +61,10 @@
 </section>
 
 <section class="breakdown-grid">
+  <div>
+    <h2>Latest Collections</h2>
+    <table id="collections"><thead><tr><th>id</th><th>range UTC</th><th>ticks</th><th>BBO</th><th>venues</th><th>analysis</th></tr></thead><tbody></tbody></table>
+  </div>
   <div>
     <h2>Latest Sessions</h2>
     <table id="sessions"><thead><tr><th>id</th><th>date</th><th>events</th><th>A/B/C</th><th>venues</th></tr></thead><tbody></tbody></table>
@@ -78,43 +84,50 @@
 <script>
 const plotBase = { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"}, margin:{t:24,l:45,r:20,b:35} };
 const plotCfg = { responsive:true, displayModeBar:true };
+let latestCollections = [];
 
 async function refreshAll() {
-  const [sys, hist, pings, processes, collector, sessions, backtests, files, paper] = await Promise.all([
+  const [sys, hist, pings, processes, collector, collections, sessions, backtests, files, paper, strategies] = await Promise.all([
     fetchJSON("/api/system/stats"),
     fetchJSON("/api/system/history?minutes=60"),
     fetchJSON("/api/system/pings"),
     fetchJSON("/api/system/processes"),
     fetchJSON("/api/collector/status"),
+    fetchJSON("/api/collections"),
     fetchJSON("/api/sessions"),
     fetchJSON("/api/backtests"),
     fetchJSON("/api/system/files"),
     fetchJSON("/api/paper/status"),
+    fetchJSON("/api/strategies"),
   ]);
-  renderTop(sys, collector, paper, sessions, backtests);
+  latestCollections = collections;
+  renderTop(sys, collector, paper, collections, sessions, backtests, strategies);
   renderSystem(sys, hist);
   renderProcesses(processes);
   renderPings(pings);
   renderCollector(collector);
+  renderCollections(collections);
   renderSessions(sessions);
   renderBacktests(backtests);
   renderFiles(files.slice(-8).reverse());
 }
 
-function renderTop(sys, collector, paper, sessions, backtests) {
+function renderTop(sys, collector, paper, collections, sessions, backtests, strategies) {
   const cards = [
     ["UTC", utc(sys.ts)],
+    ["Collections", `${collections.length} raw`],
     ["Sessions", `${sessions.length} total`],
-    ["Strategies", "scan in Strategies"],
+    ["Strategies", `${strategies.length} total`],
     ["Backtests", `${backtests.length} total`],
-    ["Collector", collector.running ? `running ${collector.session_id || ""}` : "stopped"],
-    ["Paper", paper.running ? "running" : "stopped"],
+    ["Collector", collector.stale ? `stale ${collector.session_id || ""}` : collector.running ? `running ${collector.session_id || ""}` : "stopped"],
+    ["Paper", paper.blocked ? `blocked: ${paper.mode}` : paper.running ? "running" : "stopped"],
   ];
   fillCards("topCards", cards);
   const latest = sessions[0];
   const open = document.getElementById("openLatest");
   open.href = latest ? `explorer.html?session=${latest.id}` : "explorer.html";
   open.classList.toggle("disabled", !latest);
+  document.getElementById("runAnalysisLatest").disabled = !collections.length;
 }
 
 function renderSystem(sys, hist) {
@@ -123,8 +136,8 @@ function renderSystem(sys, hist) {
     ["RAM", `${fmt(sys.ram_used_gb)} / ${fmt(sys.ram_total_gb)} GB (${fmt(sys.ram_percent)}%)`],
     ["Disk", `${fmt(sys.disk_used_gb)} / ${fmt(sys.disk_total_gb)} GB`],
     ["data/", `${fmt(sys.disk_data_gb)} GB`],
-    ["Net recv", String(sys.net_bytes_recv)],
-    ["Net sent", String(sys.net_bytes_sent)],
+    ["Net recv", humanBytes(sys.net_bytes_recv)],
+    ["Net sent", humanBytes(sys.net_bytes_sent)],
   ]);
   if (!hist.length) return;
   const xs = hist.map(r => new Date(Number(r.ts)));
@@ -145,11 +158,26 @@ function renderPings(payload) {
 }
 function renderCollector(st) {
   document.getElementById("startCollector").disabled = !!st.running;
-  document.getElementById("stopCollector").disabled = !st.running;
+  document.getElementById("stopCollector").disabled = !st.running && !st.proc_alive;
+  document.getElementById("clearStale").hidden = !st.stale;
   fillTable("#collectorVenues", st.venues || [], r => [
-    r.name, r.role, r.status, r.ticks, fmt(r.ticks_per_s_1m), r.bbo, fmt(r.bbo_per_s),
+    r.name, r.role, st.stale ? `stale (${r.status})` : r.status, r.ticks, fmt(r.ticks_per_s_1m), r.bbo, fmt(r.bbo_per_s),
     r.reconnects, utc(r.last_tick_ts), fmt(r.seconds_since_last_tick), fmt(r.last_price, 2), r.last_error || "",
   ]);
+}
+function renderCollections(rows) {
+  fillTable("#collections", rows.slice(0, 8), r => [
+    r.id,
+    `${utc(r.t_start_ms)} → ${utc(r.t_end_ms)}`,
+    r.n_ticks,
+    r.n_bbo,
+    r.n_venues,
+    r.latest_session_id ? linkTo(`explorer.html?session=${r.latest_session_id}`, "open") : analysisButton(r.id),
+  ]);
+}
+function analysisButton(collectionId) {
+  const btn = el("button", { onclick: () => runAnalysis(collectionId) }, ["Analyze"]);
+  return btn;
 }
 function renderSessions(rows) {
   fillTable("#sessions", rows.slice(0, 8), r => [
@@ -191,14 +219,36 @@ function seconds(s) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
   return h ? `${h}h ${m}m` : `${m}m ${sec}s`;
 }
+function humanBytes(x) {
+  x = Number(x || 0);
+  if (x >= 1e9) return `${fmt(x / 1e9, 2)} GB`;
+  if (x >= 1e6) return `${fmt(x / 1e6, 2)} MB`;
+  if (x >= 1e3) return `${fmt(x / 1e3, 2)} KB`;
+  return `${fmt(x, 0)} B`;
+}
+async function runAnalysis(collectionId) {
+  document.getElementById("runAnalysisLatest").disabled = true;
+  const res = await postJSON(`/api/collections/${collectionId}/analyze`, {
+    params: { bin_size_ms: 50, ema_span_bins: 200, threshold_sigma: 2.0, follower_max_dev: 0.5 }
+  });
+  location.href = `explorer.html?session=${res.session_id}`;
+}
 
 document.getElementById("startCollector").onclick = async () => {
-  await postJSON("/api/collector/start", { duration_s: 3600, venues: [] });
+  await postJSON("/api/collector/start", { duration_s: 3600, venues: [], bin_size_ms: 50, rotation_s: 1800 });
   refreshAll();
 };
 document.getElementById("stopCollector").onclick = async () => {
   await postJSON("/api/collector/stop", {});
   refreshAll();
+};
+document.getElementById("clearStale").onclick = async () => {
+  await postJSON("/api/collector/clear-stale", {});
+  refreshAll();
+};
+document.getElementById("runAnalysisLatest").onclick = async () => {
+  if (!latestCollections.length) return;
+  await runAnalysis(latestCollections[0].id);
 };
 
 (async () => {

@@ -23,7 +23,9 @@ from fastapi.staticfiles import StaticFiles
 
 from leadlag import load_session, load_strategy, run_backtest, list_sessions as core_list_sessions, run_monte_carlo
 from leadlag.backtest import BacktestResult
+from leadlag.collections import get_collection, list_collections
 from leadlag.contracts import ContractError, read_json
+from leadlag.session import Session
 from leadlag.monitor import system_stats, read_history, read_pings, list_data_files, read_collector_log, system_processes
 from leadlag.monitor.snapshot import read_collector_status
 from leadlag.venues import REGISTRY
@@ -53,6 +55,47 @@ if UI_DIR.exists():
 @app.get("/api/sessions")
 def list_sessions():
     return core_list_sessions(DATA_DIR)
+
+
+@app.get("/api/collections")
+def api_collections():
+    return [_public_collection(c) for c in list_collections(DATA_DIR)]
+
+
+@app.post("/api/collections/{collection_id}/analyze")
+def api_collection_analyze(collection_id: str, body: dict = Body(default_factory=dict)):
+    collection = get_collection(DATA_DIR, collection_id)
+    if collection is None:
+        raise HTTPException(404, {"error": "collection_not_found", "collection_id": collection_id})
+    if not collection.get("tick_file_paths"):
+        raise HTTPException(400, {"error": "collection_has_no_ticks", "collection_id": collection_id})
+
+    params = body.get("params") if isinstance(body.get("params"), dict) else dict(body or {})
+    try:
+        session = Session.build_from_raw(
+            collection_id,
+            collection["tick_file_paths"],
+            collection.get("bbo_file_paths") or [],
+            bin_size_ms=int(params.get("bin_size_ms", 50)),
+            ema_span_bins=int(params.get("ema_span_bins", params.get("ema_span", 200))),
+            threshold_sigma=float(params.get("threshold_sigma", 2.0)),
+            follower_max_dev=float(params.get("follower_max_dev", 0.5)),
+            cluster_gap_bins=int(params.get("cluster_gap_bins", 60)),
+            detection_window_bins=int(params.get("detection_window_bins", 10)),
+            confirm_window_bins=int(params.get("confirm_window_bins", 10)),
+            window_ms=int(params.get("window_ms", 10_000)),
+        )
+        out = session.save(DATA_DIR)
+    except Exception as e:
+        raise HTTPException(400, {"error": "analysis_failed", "type": type(e).__name__, "message": str(e)})
+    return {
+        "ok": True,
+        "collection_id": collection_id,
+        "session_id": session.session_id,
+        "events_count": session.events.count,
+        "n_events": session.events.count,
+        "path": str(out),
+    }
 
 
 @app.get("/api/sessions/{session_id}/meta")
@@ -267,7 +310,7 @@ def backtest_montecarlo_run(bt_id: str, body: dict = Body(default_factory=dict))
     mc = run_monte_carlo(
         result,
         n=int(body.get("n_simulations", body.get("n", 10_000))),
-        method=body.get("method", "trade_shuffle"),
+        method=body.get("method", "bootstrap"),
         block_size=int(body.get("block_size", 10)),
         seed=body.get("seed", 42),
     )
@@ -325,7 +368,10 @@ def api_venues():
 @app.get("/api/collector/status")
 def api_collector_status():
     st = read_collector_status(DATA_DIR)
-    st["proc_alive"] = COLLECTOR_PROC is not None and COLLECTOR_PROC.poll() is None
+    proc_alive = COLLECTOR_PROC is not None and COLLECTOR_PROC.poll() is None
+    st["proc_alive"] = proc_alive
+    st["running_effective"] = bool(proc_alive or st.get("running_effective"))
+    st["running"] = st["running_effective"] and not st.get("stale", False)
     return st
 
 
@@ -344,13 +390,21 @@ def api_collector_start(body: dict = Body(...)):
     global COLLECTOR_PROC
     if COLLECTOR_PROC is not None and COLLECTOR_PROC.poll() is None:
         raise HTTPException(409, "collector already running")
+    current = read_collector_status(DATA_DIR)
+    if current.get("running_effective") and not current.get("stale"):
+        raise HTTPException(409, {"error": "collector_status_running", "session_id": current.get("session_id")})
     duration_s = int(body.get("duration_s", 3600))
     venues = body.get("venues") or []
+    rotation_s = int(body.get("rotation_s", 1800))
+    bin_size_ms = int(body.get("bin_size_ms", 50))
+    if duration_s <= 0 or rotation_s <= 0 or bin_size_ms <= 0:
+        raise HTTPException(400, {"error": "invalid_collector_params", "message": "duration_s, rotation_s and bin_size_ms must be positive"})
     cmd = [sys.executable, "-m", "leadlag.collector", "--duration", str(duration_s)]
     if venues:
         cmd += ["--venues", ",".join(venues)]
+    cmd += ["--rotation-s", str(rotation_s), "--bin-size-ms", str(bin_size_ms)]
     COLLECTOR_PROC = subprocess.Popen(cmd, cwd=str(DATA_DIR.parent.resolve()))
-    return {"ok": True, "pid": COLLECTOR_PROC.pid}
+    return {"ok": True, "pid": COLLECTOR_PROC.pid, "rotation_s": rotation_s, "bin_size_ms": bin_size_ms}
 
 
 @app.post("/api/collector/stop")
@@ -364,7 +418,27 @@ def api_collector_stop():
     except Exception:
         COLLECTOR_PROC.kill()
     COLLECTOR_PROC = None
+    stale = read_collector_status(DATA_DIR)
+    if stale.get("stale"):
+        _write_json_file(DATA_DIR / ".collector_status.json", {
+            **stale,
+            "running": False,
+            "running_effective": False,
+            "cleared_stale": True,
+        })
     return {"ok": True}
+
+
+@app.post("/api/collector/clear-stale")
+def api_collector_clear_stale():
+    st = read_collector_status(DATA_DIR)
+    if not st.get("stale"):
+        return {"ok": True, "stale": False}
+    st["running"] = False
+    st["running_effective"] = False
+    st["cleared_stale"] = True
+    _write_json_file(DATA_DIR / ".collector_status.json", st)
+    return {"ok": True, "stale": True}
 
 
 # ─── paper trading ───
@@ -373,13 +447,17 @@ def api_collector_stop():
 def api_paper_status():
     p = DATA_DIR / ".paper_status.json"
     if not p.exists():
-        return {"running": False}
+        return {"running": False, "running_effective": False, "blocked": False}
     try:
         st = json.loads(p.read_text())
-        st["proc_alive"] = PAPER_PROC is not None and PAPER_PROC.poll() is None
+        proc_alive = PAPER_PROC is not None and PAPER_PROC.poll() is None
+        st["proc_alive"] = proc_alive
+        st["blocked"] = bool(st.get("blocked") or st.get("mode") == "collector_ipc_pending")
+        st["can_trade"] = bool(st.get("running") and not st["blocked"])
+        st["running_effective"] = st["can_trade"]
         return st
     except Exception:
-        return {"running": False}
+        return {"running": False, "running_effective": False, "blocked": False}
 
 
 @app.post("/api/paper/start")
@@ -539,6 +617,11 @@ def _write_json_file(path: Path, data: dict) -> None:
 
 
 # ─── helpers ───
+
+def _public_collection(collection: dict) -> dict:
+    hidden = {"tick_file_paths", "bbo_file_paths"}
+    return {k: v for k, v in collection.items() if k not in hidden}
+
 
 def _load_session(session_id: str):
     try:

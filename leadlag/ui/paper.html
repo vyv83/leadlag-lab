@@ -96,12 +96,15 @@ async function refresh() {
 }
 
 function renderStatus(st) {
-  document.getElementById("start").disabled = !!st.running;
-  document.getElementById("stop").disabled = !st.running;
+  document.getElementById("start").disabled = !!st.running || !!st.blocked || !!st.proc_alive;
+  document.getElementById("stop").disabled = !st.running && !st.blocked && !st.proc_alive;
   fillCards("statusCards", [
-    ["Status", st.running ? "running" : "stopped"],
+    ["Status", st.blocked ? "blocked" : (st.running ? "running" : "stopped")],
     ["Strategy", st.strategy || "—"],
     ["Mode", st.mode || "live_ws"],
+    ["Can trade", st.can_trade ? "yes" : "no"],
+    ["Blocked reason", st.blocked_reason || "—"],
+    ["Realtime signals", st.signal_c_supported ? "A/B/C" : "A only; Signal C parity is pending"],
     ["Started UTC", st.started_at_ms ? utc(st.started_at_ms) : "—"],
     ["Uptime", seconds(st.uptime_s)],
     ["Equity Today", `${signed(Number(st.equity_today || st.cumulative_pnl_bps || 0))} bps`],

@@ -22,6 +22,7 @@
     <label>Backtest <select id="backtest"></select></label>
     <label>Simulations <input id="nSim" type="number" min="100" step="100" value="10000"></label>
     <label>Method <select id="method">
+      <option value="bootstrap">Bootstrap (replacement)</option>
       <option value="trade_shuffle">Trade shuffle</option>
       <option value="return_shuffle">Return shuffle</option>
       <option value="block_bootstrap">Block bootstrap</option>
@@ -33,6 +34,8 @@
     <a id="backLink" class="button-link" href="backtest.html">Back to Backtest</a>
   </div>
   <div id="status" class="muted">Loading backtests...</div>
+  <div id="methodHelp" class="muted"></div>
+  <div id="warnings" class="banner" hidden></div>
 </section>
 
 <section id="cards" class="cards" hidden></section>
@@ -77,6 +80,8 @@ async function init() {
   sel.onchange = () => loadBacktest(sel.value);
   document.getElementById("run").onclick = runMonteCarlo;
   document.getElementById("refresh").onclick = () => loadBacktest(currentId);
+  document.getElementById("method").onchange = updateMethodHelp;
+  updateMethodHelp();
   await loadBacktest(currentId);
 }
 
@@ -100,6 +105,9 @@ async function loadBacktest(id) {
 }
 
 async function runMonteCarlo() {
+  const runBtn = document.getElementById("run");
+  runBtn.disabled = true;
+  runBtn.textContent = "Running...";
   document.getElementById("status").textContent = "Running Monte Carlo...";
   try {
     await postJSON(`/api/backtests/${currentId}/montecarlo/run`, {
@@ -111,6 +119,9 @@ async function runMonteCarlo() {
     await loadBacktest(currentId);
   } catch (err) {
     showError("#status", err);
+  } finally {
+    runBtn.disabled = false;
+    runBtn.textContent = "Run";
   }
 }
 
@@ -133,6 +144,7 @@ function renderCards() {
     el("div", { class: "metric-label" }, [label]),
     el("div", { class: "metric-value" }, [String(value)]),
   ])));
+  renderWarnings();
 }
 
 function renderCharts() {
@@ -164,8 +176,35 @@ function renderCharts() {
     legend: { orientation: "h", y: 1.08 },
   }, config);
   histogram("finalHist", mc.sim_final_pnls || [], "Final PnL", "bps", mc.real_pnl);
-  histogram("sharpeHist", mc.sim_sharpes || [], "Sharpe", "ratio", null);
-  histogram("ddHist", mc.sim_max_dds || [], "Max Drawdown", "bps", null);
+  histogram("sharpeHist", mc.sim_sharpes || [], "Sharpe", "ratio", mc.real_sharpe);
+  histogram("ddHist", mc.sim_max_dds || [], "Max Drawdown", "bps", mc.real_max_dd);
+}
+
+function renderWarnings() {
+  const warnings = mc.warnings || [];
+  const box = document.getElementById("warnings");
+  if (!warnings.length) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  box.textContent = warnings.map(w => {
+    if (w === "n_trades_lt_20_monte_carlo_is_low_confidence") return "Fewer than 20 trades: Monte Carlo is low-confidence.";
+    if (w === "shuffle_preserves_final_pnl_use_for_order_drawdown_not_edge_significance") return "Shuffle preserves final PnL; use it for order/drawdown robustness, not edge significance.";
+    return w;
+  }).join(" ");
+}
+
+function updateMethodHelp() {
+  const method = document.getElementById("method").value;
+  document.getElementById("blockSize").parentElement.hidden = method !== "block_bootstrap";
+  const text = {
+    bootstrap: "Default: samples trades with replacement, so final PnL distribution is not degenerate.",
+    trade_shuffle: "Trade shuffle keeps the same trades and final PnL; it is an order/drawdown check.",
+    return_shuffle: "Return shuffle keeps the same returns and final PnL; it is an order/drawdown check.",
+    block_bootstrap: "Block bootstrap samples blocks with replacement to keep some streak structure.",
+  }[method] || "";
+  document.getElementById("methodHelp").textContent = text;
 }
 
 function histogram(id, values, title, xTitle, marker) {
