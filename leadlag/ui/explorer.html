@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>leadlag — explorer</title>
+<title>leadlag - explorer</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
@@ -13,100 +13,405 @@
   <a href="explorer.html">Explorer</a>
   <a href="strategy.html">Strategies</a>
   <a href="backtest.html">Backtests</a>
+  <a href="quality.html">Quality</a>
 </nav>
 </header>
 <main>
 <section>
-  <div class="filters">
+  <div class="toolbar">
     <label>Session <select id="session"></select></label>
-    <label>Signal <select id="signal"><option value="">any</option><option>A</option><option>B</option><option>C</option></select></label>
-    <label>Min σ <input id="minMag" type="number" step="0.1" value=""></label>
-    <label>Direction <select id="dir"><option value="">any</option><option value="1">up</option><option value="-1">down</option></select></label>
-    <label>Follower <input id="follower" placeholder="Lighter Perp"></label>
-    <button id="apply">Apply</button>
+    <span class="segmented" id="signalButtons">
+      <button data-group="signal" data-value="">All</button>
+      <button data-group="signal" data-value="A">A</button>
+      <button data-group="signal" data-value="B">B</button>
+      <button data-group="signal" data-value="C">C</button>
+    </span>
+    <label>Leader <select id="leaderMode">
+      <option value="">All</option>
+      <option value="okx">OKX only</option>
+      <option value="bybit">Bybit only</option>
+      <option value="confirmed">Confirmed only</option>
+    </select></label>
+    <label>Direction <select id="direction">
+      <option value="">All</option>
+      <option value="1">UP</option>
+      <option value="-1">DOWN</option>
+    </select></label>
+    <label>Follower <select id="follower"></select></label>
+    <label>Min σ <input id="minMag" type="number" step="0.1" placeholder="0.0"></label>
+    <label>Min lagging <input id="minLagging" type="number" min="1" step="1" placeholder="1"></label>
+    <label>UTC from <input id="timeFrom" type="time"></label>
+    <label>to <input id="timeTo" type="time"></label>
+    <label>Sort <select id="sortBy">
+      <option value="time">time</option>
+      <option value="magnitude">magnitude</option>
+      <option value="lagging">lagging</option>
+    </select></label>
+    <button id="reset">Reset Filters</button>
   </div>
-  <div id="summary"></div>
-  <table id="events"><thead><tr>
-    <th>bin</th><th>signal</th><th>dir</th><th>σ</th><th>leader</th><th>laggards</th><th>n</th>
-  </tr></thead><tbody></tbody></table>
+  <div class="toolbar">
+    <button id="prevEvent">Prev Event</button>
+    <button id="nextEvent">Next Event</button>
+    <label><input id="showBbo" type="checkbox" checked> Show BBO Overlay</label>
+    <label><input id="showAllFollowers" type="checkbox"> Show All Followers</label>
+    <a id="openTrade" class="button-link" href="#" hidden>Open Trade</a>
+    <a id="viewBacktest" class="button-link" href="#" hidden>View Backtest</a>
+    <span id="summary" class="muted"></span>
+  </div>
+  <div id="status" class="muted">Loading sessions...</div>
 </section>
-<section id="detail" hidden>
-  <h2>Event detail</h2>
-  <div class="kv" id="detailKv"></div>
-  <div class="chart" id="priceChart"></div>
+
+<section class="explorer-grid">
+  <div class="event-panel">
+    <table id="events"><thead><tr>
+      <th>#</th><th>Signal</th><th>Dir</th><th>σ</th><th>Time UTC</th><th>Lagging</th><th>Leader</th><th>Trade</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+  <div class="chart-panel">
+    <div id="eventTitle" class="section-title">Select an event</div>
+    <div id="noBboBanner" class="banner" hidden></div>
+    <div class="chart tall" id="eventChart"></div>
+    <h2>Followers</h2>
+    <table id="followers"><thead><tr>
+      <th>Venue</th><th>In signal</th><th>Lag 50</th><th>Lag 80</th><th>Hit</th>
+      <th>MFE</th><th>MAE</th><th>Taker</th><th>Maker</th><th>BBO</th>
+      <th>Net 2s</th><th>Net 5s</th><th>Net 10s</th><th>Net 30s</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
 </section>
 </main>
 <script src="app.js"></script>
 <script>
-let currentSession = null;
+let sessions = [];
+let meta = {};
+let allEvents = [];
+let filteredEvents = [];
+let selectedBin = null;
+let selectedEvent = null;
+let selectedDetail = null;
+let tradeDetail = null;
+let currentSignal = "";
 
-async function loadSessions() {
-  const list = await fetchJSON("/api/sessions");
-  const sel = document.getElementById("session");
-  sel.innerHTML = list.map(s => `<option value="${s.id}">${s.id} (${s.n_events})</option>`).join("");
-  const pre = qs("session");
-  if (pre) sel.value = pre;
-  currentSession = sel.value;
-  sel.onchange = () => { currentSession = sel.value; apply(); };
+const mode = qs("mode") || "event";
+const btParam = qs("backtest");
+const tradeParam = qs("trade");
+
+function selectedSession() {
+  return document.getElementById("session").value;
 }
 
-async function apply() {
-  const params = new URLSearchParams();
-  const sig = document.getElementById("signal").value;
-  const mag = document.getElementById("minMag").value;
-  const dir = document.getElementById("dir").value;
-  const fol = document.getElementById("follower").value;
-  if (sig) params.set("signal", sig);
-  if (mag) params.set("min_mag", mag);
-  if (dir) params.set("direction", dir);
-  if (fol) params.set("follower", fol);
-  const events = await fetchJSON(`/api/sessions/${currentSession}/events?${params}`);
-  document.getElementById("summary").textContent = `${events.length} events`;
-  fillTable("#events", events, e => {
-    const a = linkTo("#", e.bin_idx);
-    a.onclick = ev => { ev.preventDefault(); showDetail(e.bin_idx); };
-    return [a, e.signal, e.direction, fmt(e.magnitude_sigma, 2),
-            e.leader, (e.lagging_followers || []).join(", "),
-            (e.lagging_followers || []).length];
+async function loadSessions() {
+  sessions = await fetchJSON("/api/sessions");
+  const sel = document.getElementById("session");
+  if (!sessions.length) {
+    document.getElementById("status").textContent = "No analyzed sessions yet.";
+    return;
+  }
+  sel.innerHTML = sessions.map(s => `<option value="${s.id}">${s.id} (${s.n_events || 0})</option>`).join("");
+  const pre = qs("session");
+  if (pre) sel.value = pre;
+  sel.onchange = () => loadSession(sel.value);
+  await loadSession(sel.value);
+}
+
+async function loadSession(sessionId) {
+  document.getElementById("status").textContent = "Loading events...";
+  meta = await fetchJSON(`/api/sessions/${sessionId}/meta`);
+  allEvents = await fetchJSON(`/api/sessions/${sessionId}/events`);
+  fillFollowerOptions();
+  if (mode === "trade" && btParam && tradeParam !== null) {
+    tradeDetail = await fetchJSON(`/api/backtests/${btParam}/trade/${tradeParam}`);
+    document.getElementById("openTrade").hidden = false;
+    document.getElementById("openTrade").href = `trade.html?backtest=${btParam}&trade=${tradeParam}`;
+    document.getElementById("viewBacktest").hidden = false;
+    document.getElementById("viewBacktest").href = `backtest.html?id=${btParam}`;
+    document.getElementById("follower").value = tradeDetail.trade.venue;
+  }
+  applyFilters();
+  const eventParam = qs("event") || (tradeDetail && tradeDetail.trade.signal_bin_idx);
+  if (eventParam !== null && eventParam !== undefined) selectEvent(Number(eventParam));
+  else if (filteredEvents.length) selectEvent(filteredEvents[0].bin_idx);
+  document.getElementById("status").textContent = "";
+}
+
+function fillFollowerOptions() {
+  const followerSel = document.getElementById("follower");
+  const followers = meta.followers || [];
+  const current = followerSel.value || qs("follower") || (followers[0] || "");
+  followerSel.innerHTML = followers.map(v => `<option value="${v}">${v}</option>`).join("");
+  if (followers.includes(current)) followerSel.value = current;
+}
+
+function applyFilters() {
+  const dir = document.getElementById("direction").value;
+  const leaderMode = document.getElementById("leaderMode").value;
+  const follower = document.getElementById("follower").value;
+  const minMag = Number(document.getElementById("minMag").value || 0);
+  const minLag = Number(document.getElementById("minLagging").value || 0);
+  const from = document.getElementById("timeFrom").value;
+  const to = document.getElementById("timeTo").value;
+  filteredEvents = allEvents.filter(e => {
+    if (currentSignal && e.signal !== currentSignal) return false;
+    if (dir && Number(e.direction) !== Number(dir)) return false;
+    if (minMag && Number(e.magnitude_sigma || 0) < minMag) return false;
+    if (minLag && Number(e.n_lagging || (e.lagging_followers || []).length) < minLag) return false;
+    if (follower && !(e.lagging_followers || []).includes(follower)) return false;
+    if (leaderMode === "confirmed" && e.signal !== "C") return false;
+    if (leaderMode === "okx" && !["OKX Perp", "confirmed"].includes(e.leader) && e.anchor_leader !== "OKX Perp") return false;
+    if (leaderMode === "bybit" && !["Bybit Perp", "confirmed"].includes(e.leader) && e.anchor_leader !== "Bybit Perp") return false;
+    const hhmm = utc(e.ts_ms).slice(0, 5);
+    if (from && hhmm < from) return false;
+    if (to && hhmm > to) return false;
+    return true;
+  });
+  const sort = document.getElementById("sortBy").value;
+  if (sort === "magnitude") filteredEvents.sort((a, b) => Number(b.magnitude_sigma || 0) - Number(a.magnitude_sigma || 0));
+  else if (sort === "lagging") filteredEvents.sort((a, b) => Number(b.n_lagging || 0) - Number(a.n_lagging || 0));
+  else filteredEvents.sort((a, b) => Number(a.ts_ms || 0) - Number(b.ts_ms || 0));
+  renderEventsTable();
+}
+
+function renderEventsTable() {
+  document.getElementById("summary").textContent = `Showing ${filteredEvents.length} of ${allEvents.length} events`;
+  const tbody = document.querySelector("#events tbody");
+  tbody.innerHTML = "";
+  filteredEvents.forEach((e, i) => {
+    const tr = el("tr", { "data-bin": e.bin_idx, onclick: () => selectEvent(e.bin_idx) });
+    if (Number(e.bin_idx) === Number(selectedBin)) tr.classList.add("selected");
+    const tradeLink = tradeDetail && Number(tradeDetail.trade.signal_bin_idx) === Number(e.bin_idx)
+      ? linkTo(`trade.html?backtest=${btParam}&trade=${tradeParam}`, "trade")
+      : "";
+    const dir = Number(e.direction) > 0 ? "UP" : "DOWN";
+    [i + 1, e.signal, dir, fmt(Number(e.magnitude_sigma), 2), utc(e.ts_ms),
+      e.n_lagging || (e.lagging_followers || []).length, e.anchor_leader || e.leader, tradeLink]
+      .forEach(c => {
+        const td = el("td");
+        if (c instanceof Node) td.appendChild(c); else td.textContent = c;
+        tr.appendChild(td);
+      });
+    tbody.appendChild(tr);
   });
 }
 
-async function showDetail(binIdx) {
-  const d = await fetchJSON(`/api/sessions/${currentSession}/event/${binIdx}`);
-  const e = d.event;
-  document.getElementById("detail").hidden = false;
-  const kv = document.getElementById("detailKv");
-  kv.innerHTML = "";
-  const add = (k, v) => {
-    kv.appendChild(el("div", { class: "k" }, [k]));
-    kv.appendChild(el("div", {}, [String(v)]));
+async function selectEvent(binIdx) {
+  selectedBin = Number(binIdx);
+  selectedEvent = allEvents.find(e => Number(e.bin_idx) === selectedBin);
+  if (!selectedEvent) return;
+  setQS({ session: selectedSession(), event: selectedBin, mode: mode === "trade" ? "trade" : null, backtest: btParam, trade: tradeParam });
+  renderEventsTable();
+  document.getElementById("eventTitle").textContent =
+    `${selectedEvent.signal} ${Number(selectedEvent.direction) > 0 ? "UP" : "DOWN"} ` +
+    `${fmt(Number(selectedEvent.magnitude_sigma), 2)}σ at ${utc(selectedEvent.ts_ms)} ` +
+    `leader ${selectedEvent.anchor_leader || selectedEvent.leader}`;
+  selectedDetail = await fetchJSON(`/api/sessions/${selectedSession()}/event/${selectedBin}`);
+  renderChart();
+  renderFollowersTable();
+}
+
+function renderChart() {
+  const chart = document.getElementById("eventChart");
+  const priceWindow = selectedDetail.price_window;
+  if (!priceWindow || !priceWindow.venues) {
+    chart.innerHTML = "<em>No price window stored for this event.</em>";
+    return;
+  }
+  const rel = priceWindow.rel_times_ms || [];
+  const traces = [];
+  const shapes = [];
+  const annotations = [];
+  const leaderVenues = selectedEvent.signal === "C"
+    ? (meta.leaders || ["OKX Perp", "Bybit Perp"])
+    : [selectedEvent.anchor_leader || selectedEvent.leader].filter(Boolean);
+  leaderVenues.forEach(venue => {
+    const prices = priceWindow.venues[venue];
+    if (!prices) return;
+    const base = valueAtZero(prices, rel);
+    traces.push({
+      x: rel, y: priceToBps(prices, base), name: venue,
+      mode: "lines", type: "scatter", yaxis: "y",
+      line: { width: selectedEvent.anchor_leader === venue ? 3 : 2 },
+    });
+  });
+  const follower = document.getElementById("follower").value;
+  addFollowerTrace(traces, priceWindow, rel, follower, { width: 3, color: "#3fb950" });
+  if (document.getElementById("showAllFollowers").checked) {
+    (meta.followers || []).forEach(v => {
+      if (v !== follower) addFollowerTrace(traces, priceWindow, rel, v, { width: 1 });
+    });
+  }
+  addBboOverlay(traces, priceWindow, selectedDetail.bbo_window, rel, follower);
+  addEventShapes(shapes, annotations, follower);
+  const layout = {
+    paper_bgcolor: "#0e1117",
+    plot_bgcolor: "#0e1117",
+    font: { color: "#c9d1d9" },
+    margin: { t: 20, r: 70, b: 45, l: 55 },
+    hovermode: "x unified",
+    xaxis: { title: "ms from event", zeroline: false },
+    yaxis: { title: "leader bps from t0", domain: [0.58, 1.0], zeroline: true },
+    yaxis2: { title: "follower bps from t0", domain: [0.0, 0.42], zeroline: true },
+    yaxis3: { title: "spread bps", overlaying: "y2", side: "right", showgrid: false },
+    legend: { orientation: "h", y: 1.08 },
+    shapes,
+    annotations,
   };
-  add("bin_idx", e.bin_idx);
-  add("ts_ms", e.ts_ms);
-  add("signal", e.signal);
-  add("direction", e.direction);
-  add("magnitude_sigma", fmt(e.magnitude_sigma, 2));
-  add("leader", e.leader);
-  add("lagging_followers", (e.lagging_followers || []).join(", "));
-  const chart = document.getElementById("priceChart");
-  if (d.price_window && d.price_window.venues) {
-    const rel = d.price_window.rel_times_ms || [];
-    const traces = Object.entries(d.price_window.venues).map(([v, prices]) =>
-      ({ x: rel, y: prices, name: v, mode: "lines" }));
-    Plotly.newPlot(chart, traces,
-      { paper_bgcolor: "#0e1117", plot_bgcolor: "#0e1117",
-        font: { color: "#c9d1d9" }, margin: { t: 20 },
-        xaxis: { title: "rel ms" }, yaxis: { title: "price" } },
-      { displayModeBar: false });
-  } else {
-    chart.innerHTML = "<em>no price_window stored for this event</em>";
+  Plotly.react(chart, traces, layout, { responsive: true, displayModeBar: true });
+}
+
+function addFollowerTrace(traces, priceWindow, rel, venue, line) {
+  const prices = priceWindow.venues[venue];
+  if (!prices) return;
+  const base = valueAtZero(prices, rel);
+  traces.push({ x: rel, y: priceToBps(prices, base), name: venue, mode: "lines", type: "scatter", yaxis: "y2", line });
+}
+
+function addBboOverlay(traces, priceWindow, bboWindow, rel, follower) {
+  const banner = document.getElementById("noBboBanner");
+  banner.hidden = true;
+  if (!document.getElementById("showBbo").checked) return;
+  const available = meta.bbo_available || {};
+  const bbo = bboWindow && bboWindow.venues && bboWindow.venues[follower];
+  if (!available[follower] || !bbo) {
+    banner.textContent = `BBO not available for ${follower}`;
+    banner.hidden = false;
+    return;
+  }
+  const base = valueAtZero(priceWindow.venues[follower], rel);
+  const bidBps = priceToBps(bbo.bid || [], base);
+  const askBps = priceToBps(bbo.ask || [], base);
+  traces.push({ x: rel, y: bidBps, name: `${follower} bid`, mode: "lines", type: "scatter", yaxis: "y2", line: { color: "#8b949e", width: 1 } });
+  traces.push({ x: rel, y: askBps, name: `${follower} ask`, mode: "lines", type: "scatter", yaxis: "y2", fill: "tonexty", fillcolor: "rgba(139,148,158,0.22)", line: { color: "#8b949e", width: 1 } });
+  traces.push({ x: rel, y: bbo.spread_bps || [], name: "spread bps", mode: "lines", type: "scatter", yaxis: "y3", line: { color: "#f78166", width: 1, dash: "dot" } });
+}
+
+function addEventShapes(shapes, annotations, follower) {
+  shapes.push(vline(0, "#f85149", "dash"));
+  shapes.push({ type: "rect", xref: "x", yref: "paper", x0: -10000, x1: 0, y0: 0, y1: 1, fillcolor: "rgba(248,81,73,0.08)", line: { width: 0 } });
+  const fm = (selectedEvent.follower_metrics || {})[follower] || {};
+  if (fm.lag_50_ms !== null && fm.lag_50_ms !== undefined) {
+    shapes.push(vline(Number(fm.lag_50_ms), "#3fb950", "dot"));
+    annotations.push(labelAt(Number(fm.lag_50_ms), "lag50"));
+  }
+  if (fm.lag_80_ms !== null && fm.lag_80_ms !== undefined) {
+    shapes.push(vline(Number(fm.lag_80_ms), "#d29922", "dot"));
+    annotations.push(labelAt(Number(fm.lag_80_ms), "lag80"));
+  }
+  if (mode === "trade" && tradeDetail && tradeDetail.trade) {
+    const t = tradeDetail.trade;
+    const entryRel = Number(t.entry_ts_ms) - Number(selectedEvent.ts_ms);
+    const exitRel = Number(t.exit_ts_ms) - Number(selectedEvent.ts_ms);
+    const positive = Number(t.net_pnl_bps) >= 0;
+    shapes.push(vline(entryRel, "#3fb950", "solid"));
+    shapes.push(vline(exitRel, positive ? "#3fb950" : "#f85149", "solid"));
+    shapes.push({ type: "rect", xref: "x", yref: "paper", x0: entryRel, x1: exitRel, y0: 0, y1: 0.42, fillcolor: positive ? "rgba(63,185,80,0.12)" : "rgba(248,81,73,0.12)", line: { width: 0 } });
+    annotations.push(labelAt(entryRel, `ENTRY ${fmt(Number(t.entry_price_exec), 2)}`));
+    annotations.push(labelAt(exitRel, `EXIT ${fmt(Number(t.exit_price_exec), 2)}`));
+    if (t.mfe_time_ms !== null) annotations.push(labelAt(entryRel + Number(t.mfe_time_ms), `MFE ${signed(Number(t.mfe_bps))}`));
+    if (t.mae_time_ms !== null) annotations.push(labelAt(entryRel + Number(t.mae_time_ms), `MAE ${signed(Number(t.mae_bps))}`));
   }
 }
 
+function renderFollowersTable() {
+  const followers = meta.followers || [];
+  const fees = selectedDetail.fees || meta.fees || {};
+  const available = selectedDetail.bbo_available || meta.bbo_available || {};
+  fillTable("#followers", followers, venue => {
+    const m = (selectedEvent.follower_metrics || {})[venue] || {};
+    const grid = (selectedEvent.grid_results || {})[venue] || {};
+    return [
+      linkTo("#", venue),
+      (selectedEvent.lagging_followers || []).includes(venue) ? "yes" : "no",
+      fmt(m.lag_50_ms, 0),
+      fmt(m.lag_80_ms, 0),
+      m.hit === 1 ? "yes" : m.hit === 0 ? "no" : "—",
+      fmt(m.mfe_bps),
+      fmt(m.mae_bps),
+      fmt((fees[venue] || {}).taker_bps),
+      fmt((fees[venue] || {}).maker_bps),
+      available[venue] ? "yes" : "N/A",
+      netAt(grid, "2000"),
+      netAt(grid, "5000"),
+      netAt(grid, "10000"),
+      netAt(grid, "30000"),
+    ];
+  });
+  document.querySelectorAll("#followers tbody tr").forEach((tr, i) => {
+    const venue = followers[i];
+    tr.classList.toggle("selected", venue === document.getElementById("follower").value);
+    tr.onclick = () => {
+      document.getElementById("follower").value = venue;
+      applyFilters();
+      renderChart();
+      renderFollowersTable();
+    };
+  });
+}
+
+function netAt(grid, hold) {
+  for (const delay of Object.keys(grid || {})) {
+    if (grid[delay] && grid[delay][hold]) return fmt(Number(grid[delay][hold].net_bps));
+  }
+  return "—";
+}
+
+function valueAtZero(values, rel) {
+  const idx = rel.findIndex(x => Number(x) === 0);
+  const v = idx >= 0 ? values[idx] : firstNumber(values);
+  return v ? Number(v) : null;
+}
+function vline(x, color, dash) {
+  return { type: "line", xref: "x", yref: "paper", x0: x, x1: x, y0: 0, y1: 1, line: { color, width: 1, dash } };
+}
+function labelAt(x, text) {
+  return { x, y: 1.0, xref: "x", yref: "paper", text, showarrow: false, yanchor: "bottom", font: { size: 11 } };
+}
+function eventIndex() {
+  return filteredEvents.findIndex(e => Number(e.bin_idx) === Number(selectedBin));
+}
+function moveEvent(delta) {
+  const i = eventIndex();
+  const next = filteredEvents[i + delta];
+  if (next) selectEvent(next.bin_idx);
+}
+
+document.querySelectorAll("[data-group='signal']").forEach(btn => {
+  btn.onclick = () => {
+    currentSignal = btn.dataset.value;
+    setActiveButton("signal", currentSignal);
+    applyFilters();
+    if (filteredEvents.length) selectEvent(filteredEvents[0].bin_idx);
+  };
+});
+["leaderMode", "direction", "follower", "minMag", "minLagging", "timeFrom", "timeTo", "sortBy"].forEach(id => {
+  document.getElementById(id).onchange = () => {
+    applyFilters();
+    if (selectedEvent) renderChart();
+    if (selectedEvent) renderFollowersTable();
+  };
+});
+document.getElementById("showBbo").onchange = renderChart;
+document.getElementById("showAllFollowers").onchange = renderChart;
+document.getElementById("prevEvent").onclick = () => moveEvent(-1);
+document.getElementById("nextEvent").onclick = () => moveEvent(1);
+document.getElementById("reset").onclick = () => {
+  currentSignal = "";
+  setActiveButton("signal", "");
+  ["leaderMode", "direction", "minMag", "minLagging", "timeFrom", "timeTo"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("sortBy").value = "time";
+  applyFilters();
+};
+document.addEventListener("keydown", ev => {
+  if (["ArrowDown", "ArrowRight"].includes(ev.key)) moveEvent(1);
+  if (["ArrowUp", "ArrowLeft"].includes(ev.key)) moveEvent(-1);
+});
+
 (async () => {
-  await loadSessions();
-  document.getElementById("apply").onclick = apply;
-  await apply();
+  try {
+    setActiveButton("signal", "");
+    await loadSessions();
+  } catch (err) {
+    showError("#status", err);
+  }
 })();
 </script>
 </body>

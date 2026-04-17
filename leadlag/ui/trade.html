@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>leadlag — trade</title>
+<title>leadlag - trade</title>
 <link rel="stylesheet" href="style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>Trade</h1>
+<header><h1>Trade Inspector</h1>
 <nav>
   <a href="dashboard.html">Dashboard</a>
   <a href="explorer.html">Explorer</a>
@@ -16,27 +17,222 @@
 </header>
 <main>
 <section>
-  <h2 id="title"></h2>
-  <div class="kv" id="kv"></div>
-  <p><a id="backLink" href="#">← back to backtest</a> ·
-     <a id="explorerLink" href="#">open in explorer</a></p>
+  <div class="toolbar">
+    <a id="prevLink" class="button-link" href="#">Prev</a>
+    <a id="nextLink" class="button-link" href="#">Next</a>
+    <a id="explorerLink" class="button-link" href="#">View in Explorer</a>
+    <a id="backLink" class="button-link" href="#">Back to Backtest</a>
+    <label><input id="toggleBbo" type="checkbox" checked> Toggle BBO</label>
+    <label><input id="allFollowers" type="checkbox"> Show All Followers</label>
+  </div>
+  <h2 id="title">Loading trade...</h2>
+  <div id="summary" class="trade-summary"></div>
+</section>
+
+<section class="trade-grid">
+  <div>
+    <div id="noBboBanner" class="banner" hidden></div>
+    <div class="chart tall" id="tradeChart"></div>
+  </div>
+  <aside>
+    <h2>Execution</h2>
+    <div class="kv compact" id="metrics"></div>
+  </aside>
 </section>
 </main>
 <script src="app.js"></script>
 <script>
-(async () => {
-  const bt = qs("backtest"), tid = qs("trade");
-  if (!bt || tid == null) { document.body.innerHTML = "<p>missing params</p>"; return; }
+let payload = null;
+
+function btId() { return qs("backtest"); }
+function tradeId() { return qs("trade"); }
+
+async function loadTrade() {
+  const bt = btId();
+  const tid = tradeId();
+  if (!bt || tid === null) {
+    document.getElementById("title").textContent = "Missing backtest or trade parameter.";
+    return;
+  }
+  payload = await fetchJSON(`/api/backtests/${bt}/trade/${tid}`);
+  const trade = payload.trade;
+  const meta = payload.meta || {};
   document.getElementById("backLink").href = `backtest.html?id=${bt}`;
-  const { trade } = await fetchJSON(`/api/backtests/${bt}/trade/${tid}`);
-  document.getElementById("title").textContent = `Trade #${trade.trade_id} — ${trade.venue} ${trade.side}`;
-  const meta = await fetchJSON(`/api/backtests/${bt}/meta`);
   document.getElementById("explorerLink").href =
-    `explorer.html?session=${meta.session_id}`;
-  const kv = document.getElementById("kv");
-  for (const [k, v] of Object.entries(trade)) {
-    kv.appendChild(el("div",{class:"k"},[k]));
-    kv.appendChild(el("div",{},[typeof v === "number" ? v.toFixed(4) : String(v)]));
+    `explorer.html?session=${meta.session_id}&event=${trade.signal_bin_idx}&mode=trade&backtest=${bt}&trade=${trade.trade_id}`;
+  setNav("prevLink", payload.prev_trade_id);
+  setNav("nextLink", payload.next_trade_id);
+  renderHeader();
+  renderMetrics();
+  renderChart();
+}
+
+function setNav(id, targetTradeId) {
+  const a = document.getElementById(id);
+  if (targetTradeId === null || targetTradeId === undefined) {
+    a.classList.add("disabled");
+    a.removeAttribute("href");
+  } else {
+    a.classList.remove("disabled");
+    a.href = `trade.html?backtest=${btId()}&trade=${targetTradeId}`;
+  }
+}
+
+function renderHeader() {
+  const trade = payload.trade;
+  const meta = payload.meta || {};
+  const direction = Number(trade.direction) > 0 ? "UP" : "DOWN";
+  document.getElementById("title").textContent =
+    `Trade #${trade.trade_id} of ${payload.total_trades} - ${meta.strategy_name || "strategy"} - ${trade.venue}`;
+  document.getElementById("summary").innerHTML = "";
+  [
+    ["Signal", trade.signal_type],
+    ["Direction", direction],
+    ["Magnitude", `${fmt(Number(trade.magnitude_sigma), 2)}σ`],
+    ["Result", `${signed(Number(trade.net_pnl_bps), 2)} bps`],
+    ["Exit", trade.exit_reason],
+  ].forEach(([k, v]) => {
+    document.getElementById("summary").appendChild(el("div", { class: "pill" }, [`${k}: ${v}`]));
+  });
+}
+
+function renderMetrics() {
+  const t = payload.trade;
+  const rows = [
+    ["Entry time", utc(t.entry_ts_ms)],
+    ["Exit time", utc(t.exit_ts_ms)],
+    ["Hold ms", fmt(t.hold_ms, 0)],
+    ["Exit reason", t.exit_reason],
+    ["Entry VWAP", fmt(t.entry_price_vwap, 4)],
+    ["Entry Exec", fmt(t.entry_price_exec, 4)],
+    ["Exit VWAP", fmt(t.exit_price_vwap, 4)],
+    ["Exit Exec", fmt(t.exit_price_exec, 4)],
+    ["Slippage entry", `${fmt(t.slippage_entry_bps)} bps (${t.slippage_source_entry || t.slippage_source})`],
+    ["Slippage exit", `${fmt(t.slippage_exit_bps)} bps (${t.slippage_source_exit || t.slippage_source})`],
+    ["Slippage total", `${fmt(t.slippage_total_bps)} bps`],
+    ["Fee entry", `${fmt(t.fee_entry_bps)} bps (${t.fee_type_entry || t.fee_type})`],
+    ["Fee exit", `${fmt(t.fee_exit_bps)} bps (${t.fee_type_exit || t.fee_type})`],
+    ["Fee total", `${fmt(t.fee_total_bps)} bps`],
+    ["Gross PnL", `${signed(Number(t.gross_pnl_bps))} bps`],
+    ["Net PnL", `${signed(Number(t.net_pnl_bps))} bps`],
+    ["MFE", `${signed(Number(t.mfe_bps))} bps @ ${fmt(t.mfe_time_ms, 0)} ms`],
+    ["MAE", `${signed(Number(t.mae_bps))} bps @ ${fmt(t.mae_time_ms, 0)} ms`],
+    ["Spread entry", t.spread_at_entry_bps === null ? "N/A" : `${fmt(t.spread_at_entry_bps)} bps`],
+    ["Spread exit", t.spread_at_exit_bps === null ? "N/A" : `${fmt(t.spread_at_exit_bps)} bps`],
+    ["BBO available", t.bbo_available ? "yes" : "no"],
+    ["N lagging", fmt(t.n_lagging_at_signal, 0)],
+    ["Leader dev", fmt(t.leader_dev_sigma)],
+  ];
+  const kv = document.getElementById("metrics");
+  kv.innerHTML = "";
+  rows.forEach(([k, v]) => {
+    kv.appendChild(el("div", { class: "k" }, [k]));
+    kv.appendChild(el("div", {}, [String(v)]));
+  });
+}
+
+function renderChart() {
+  const t = payload.trade;
+  const event = payload.event || {};
+  const priceWindow = payload.price_window;
+  const banner = document.getElementById("noBboBanner");
+  banner.hidden = true;
+  if (!priceWindow || !priceWindow.venues) {
+    document.getElementById("tradeChart").innerHTML = "<em>No price window stored for this trade event.</em>";
+    return;
+  }
+  const rel = priceWindow.rel_times_ms || [];
+  const traces = [];
+  const shapes = [];
+  const annotations = [];
+  const leaders = event.signal === "C"
+    ? ["OKX Perp", "Bybit Perp"].filter(v => priceWindow.venues[v])
+    : [event.anchor_leader || event.leader].filter(v => priceWindow.venues[v]);
+  leaders.forEach(v => addTrace(traces, priceWindow, rel, v, "y", { width: 2 }));
+  addTrace(traces, priceWindow, rel, t.venue, "y2", { width: 3, color: "#3fb950" });
+  if (document.getElementById("allFollowers").checked) {
+    Object.keys(priceWindow.venues).forEach(v => {
+      if (!leaders.includes(v) && v !== t.venue) addTrace(traces, priceWindow, rel, v, "y2", { width: 1 });
+    });
+  }
+  addBbo(traces, priceWindow, payload.bbo_window, rel, t.venue);
+  const entryRel = Number(t.entry_ts_ms) - Number(event.ts_ms);
+  const exitRel = Number(t.exit_ts_ms) - Number(event.ts_ms);
+  shapes.push(vline(0, "#f85149", "dash"));
+  shapes.push(vline(entryRel, "#3fb950", "solid"));
+  shapes.push(vline(exitRel, Number(t.net_pnl_bps) >= 0 ? "#3fb950" : "#f85149", "solid"));
+  shapes.push({ type: "rect", xref: "x", yref: "paper", x0: entryRel, x1: exitRel, y0: 0, y1: 0.42, fillcolor: Number(t.net_pnl_bps) >= 0 ? "rgba(63,185,80,0.12)" : "rgba(248,81,73,0.12)", line: { width: 0 } });
+  annotations.push(label(entryRel, `ENTRY VWAP ${fmt(t.entry_price_vwap, 2)} / Exec ${fmt(t.entry_price_exec, 2)}`));
+  annotations.push(label(exitRel, `EXIT ${fmt(t.exit_price_exec, 2)} - ${t.exit_reason}`));
+  annotations.push(label(entryRel + Number(t.mfe_time_ms || 0), `MFE ${signed(Number(t.mfe_bps))}`));
+  annotations.push(label(entryRel + Number(t.mae_time_ms || 0), `MAE ${signed(Number(t.mae_bps))}`));
+  if (t.stop_loss_bps !== null && t.stop_loss_bps !== undefined) {
+    annotations.push(label(entryRel, `SL ${fmt(t.stop_loss_bps)} bps`));
+  }
+  if (t.take_profit_bps !== null && t.take_profit_bps !== undefined) {
+    annotations.push(label(entryRel, `TP ${fmt(t.take_profit_bps)} bps`));
+  }
+  if (event.signal === "C" && event.confirmer_lag_ms !== null && event.confirmer_lag_ms !== undefined) {
+    annotations.push(label(Number(event.confirmer_lag_ms), `confirmer lag ${event.confirmer_lag_ms}ms`));
+  }
+  Plotly.react("tradeChart", traces, {
+    paper_bgcolor: "#0e1117",
+    plot_bgcolor: "#0e1117",
+    font: { color: "#c9d1d9" },
+    margin: { t: 20, r: 75, b: 45, l: 55 },
+    hovermode: "x unified",
+    xaxis: { title: "ms from event" },
+    yaxis: { title: "leader bps from t0", domain: [0.58, 1.0], zeroline: true },
+    yaxis2: { title: "follower bps from t0", domain: [0.0, 0.42], zeroline: true },
+    yaxis3: { title: "spread bps", overlaying: "y2", side: "right", showgrid: false },
+    legend: { orientation: "h", y: 1.08 },
+    shapes,
+    annotations,
+  }, { responsive: true, displayModeBar: true });
+}
+
+function addTrace(traces, priceWindow, rel, venue, yaxis, line) {
+  const values = priceWindow.venues[venue];
+  if (!values) return;
+  const base = valueAtZero(values, rel);
+  traces.push({ x: rel, y: priceToBps(values, base), name: venue, type: "scatter", mode: "lines", yaxis, line });
+}
+
+function addBbo(traces, priceWindow, bboWindow, rel, venue) {
+  if (!document.getElementById("toggleBbo").checked) return;
+  const bbo = bboWindow && bboWindow.venues && bboWindow.venues[venue];
+  if (!bbo) {
+    const banner = document.getElementById("noBboBanner");
+    banner.textContent = `BBO not available for ${venue}`;
+    banner.hidden = false;
+    return;
+  }
+  const base = valueAtZero(priceWindow.venues[venue], rel);
+  traces.push({ x: rel, y: priceToBps(bbo.bid || [], base), name: `${venue} bid`, yaxis: "y2", type: "scatter", mode: "lines", line: { color: "#8b949e", width: 1 } });
+  traces.push({ x: rel, y: priceToBps(bbo.ask || [], base), name: `${venue} ask`, yaxis: "y2", type: "scatter", mode: "lines", fill: "tonexty", fillcolor: "rgba(139,148,158,0.22)", line: { color: "#8b949e", width: 1 } });
+  traces.push({ x: rel, y: bbo.spread_bps || [], name: "spread bps", yaxis: "y3", type: "scatter", mode: "lines", line: { color: "#f78166", width: 1, dash: "dot" } });
+}
+
+function valueAtZero(values, rel) {
+  const idx = rel.findIndex(x => Number(x) === 0);
+  const v = idx >= 0 ? values[idx] : firstNumber(values);
+  return v ? Number(v) : null;
+}
+function vline(x, color, dash) {
+  return { type: "line", xref: "x", yref: "paper", x0: x, x1: x, y0: 0, y1: 1, line: { color, width: 1, dash } };
+}
+function label(x, text) {
+  return { x, y: 1.0, xref: "x", yref: "paper", text, showarrow: false, yanchor: "bottom", font: { size: 11 } };
+}
+
+document.getElementById("toggleBbo").onchange = () => payload && renderChart();
+document.getElementById("allFollowers").onchange = () => payload && renderChart();
+
+(async () => {
+  try {
+    await loadTrade();
+  } catch (err) {
+    showError("main", err);
   }
 })();
 </script>
