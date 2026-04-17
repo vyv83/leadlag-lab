@@ -30,6 +30,7 @@ a:hover { text-decoration: underline; }
 pre { background: #161b22; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
 .chart { width: 100%; height: 420px; margin-top: 12px; }
 .chart.tall { height: 620px; }
+.chart.small { height: 330px; margin-top: 0; }
 .muted { color: #8b949e; }
 .error, .banner {
   border: 1px solid #f85149; color: #ffdcd7; background: rgba(248,81,73,0.12);
@@ -52,6 +53,28 @@ tr.selected td { background: #1f6feb33; }
   border: 1px solid #30363d; border-radius: 4px; padding: 6px 8px; background: #161b22;
 }
 aside { border-left: 1px solid #30363d; padding-left: 16px; }
+.cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px; margin-bottom: 22px;
+}
+.metric-card {
+  border: 1px solid #30363d; background: #161b22; border-radius: 6px;
+  padding: 10px; min-height: 74px;
+}
+.metric-label { color: #8b949e; font-size: 12px; margin-bottom: 6px; }
+.metric-value { color: #f0f6fc; font-size: 18px; font-weight: 600; }
+.chart-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 14px; margin-bottom: 24px;
+}
+.breakdown-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+h3 { font-size: 13px; color: #8b949e; font-weight: 600; margin: 0 0 8px; }
+.table-scroll { max-height: 720px; overflow: auto; border: 1px solid #21262d; }
+.profit-row td { background: rgba(63,185,80,0.035); }
+.loss-row td { background: rgba(248,81,73,0.04); }
 @media (max-width: 980px) {
   .explorer-grid, .trade-grid { grid-template-columns: 1fr; }
   aside { border-left: 0; padding-left: 0; }

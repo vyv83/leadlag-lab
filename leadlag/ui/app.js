@@ -14,6 +14,20 @@ async function fetchJSON(url) {
   }
   return r.json();
 }
+async function postJSON(url, body) {
+  const full = url.startsWith("/api") ? api(url) : url;
+  const r = await fetch(full, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  if (!r.ok) {
+    let detail = "";
+    try { detail = JSON.stringify(await r.json()); } catch (_) { detail = await r.text(); }
+    throw new Error(`${full}: ${r.status} ${detail}`);
+  }
+  return r.json();
+}
 function qs(k) { return new URLSearchParams(location.search).get(k); }
 function setQS(params) {
   const u = new URL(location.href);

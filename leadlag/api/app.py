@@ -170,8 +170,11 @@ def list_backtests():
             "created_at": meta.get("created_at"),
             "n_trades": stats.get("n_trades", 0),
             "total_net_pnl_bps": stats.get("total_net_pnl_bps", 0.0),
+            "avg_trade_bps": stats.get("avg_trade_bps", 0.0),
             "win_rate": stats.get("win_rate", 0.0),
             "sharpe": stats.get("sharpe", 0.0),
+            "max_drawdown_bps": stats.get("max_drawdown_bps", 0.0),
+            "has_montecarlo": (d / "montecarlo.json").exists(),
         })
     return out
 

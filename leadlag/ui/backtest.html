@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>leadlag — backtest</title>
+<title>leadlag - backtest</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
@@ -13,83 +13,354 @@
   <a href="explorer.html">Explorer</a>
   <a href="strategy.html">Strategies</a>
   <a href="backtest.html">Backtests</a>
+  <a href="montecarlo.html">Monte Carlo</a>
 </nav>
 </header>
 <main>
 <section id="list" hidden>
   <h2>All backtests</h2>
+  <div id="listStatus" class="muted">Loading...</div>
   <table id="bts"><thead><tr>
-    <th>id</th><th>strategy</th><th>session</th><th>n_trades</th><th>net_bps</th><th>win</th><th>sharpe</th>
+    <th>id</th><th>strategy</th><th>session</th><th>n trades</th><th>net bps</th>
+    <th>avg trade</th><th>win</th><th>sharpe</th><th>Monte Carlo</th>
   </tr></thead><tbody></tbody></table>
 </section>
+
 <section id="detail" hidden>
+  <div class="toolbar">
+    <a id="mcLink" class="button-link" href="#">Run Monte Carlo</a>
+    <a id="sessionLink" class="button-link" href="#">Open Session in Explorer</a>
+    <button id="exportJson">Export JSON</button>
+    <span id="status" class="muted">Loading...</span>
+  </div>
   <h2 id="title"></h2>
   <div class="kv" id="meta"></div>
+</section>
+
+<section id="kpis" class="cards" hidden></section>
+
+<section id="detailCharts" hidden>
   <h2>Equity</h2>
-  <label><input id="layers" type="checkbox"> show layers (gross/post-fee/net)</label>
-  <div class="chart" id="equityChart"></div>
-  <h2>Stats</h2>
-  <pre id="stats"></pre>
+  <div class="toolbar">
+    <span>Layers</span>
+    <label><input class="layerToggle" value="gross" type="checkbox" checked> Gross</label>
+    <label><input class="layerToggle" value="post_fee" type="checkbox" checked> Gross - Fees</label>
+    <label><input class="layerToggle" value="net" type="checkbox" checked> Net</label>
+  </div>
+  <div class="chart tall" id="equityChart"></div>
+
+  <h2>Distributions</h2>
+  <div class="chart-grid">
+    <div class="chart small" id="pnlHist"></div>
+    <div class="chart small" id="holdHist"></div>
+    <div class="chart small" id="magnitudeScatter"></div>
+    <div class="chart small" id="timeScatter"></div>
+    <div class="chart small" id="spreadScatter"></div>
+  </div>
+
+  <h2>Breakdowns</h2>
+  <div class="breakdown-grid">
+    <div>
+      <h3>Fee & Slippage Impact</h3>
+      <table id="impact"><thead><tr><th>component</th><th>bps</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div>
+      <h3>By Spread Bucket</h3>
+      <table id="spreadBuckets"><thead><tr><th>bucket</th><th>n</th><th>avg net</th><th>win</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div>
+      <h3>By Venue</h3>
+      <table id="byVenue"><thead><tr><th>venue</th><th>n</th><th>avg net</th><th>fee</th><th>slip</th><th>win</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div>
+      <h3>By Signal</h3>
+      <table id="bySignal"><thead><tr><th>signal</th><th>n</th><th>avg net</th><th>win</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</section>
+
+<section id="tradesSection" hidden>
   <h2>Trades</h2>
-  <table id="trades"><thead><tr>
-    <th>id</th><th>bin</th><th>sig</th><th>venue</th><th>side</th><th>entry</th><th>exit</th>
-    <th>gross</th><th>fee</th><th>slip</th><th>net</th><th>reason</th><th>spread</th>
-  </tr></thead><tbody></tbody></table>
+  <div class="toolbar">
+    <label>Signal <select id="signalFilter"><option value="">All</option><option>A</option><option>B</option><option>C</option></select></label>
+    <label>Venue <select id="venueFilter"><option value="">All</option></select></label>
+    <label>PnL <select id="pnlFilter"><option value="">All</option><option value="profit">Profit only</option><option value="loss">Loss only</option></select></label>
+    <label>Exit <select id="exitFilter"><option value="">All</option></select></label>
+    <label>Spread <select id="spreadFilter"><option value="">All</option><option value="0-1">0-1 bps</option><option value="1-2">1-2 bps</option><option value="2-5">2-5 bps</option><option value="5+">>5 bps</option><option value="N/A">N/A</option></select></label>
+    <label>Sort <select id="sortTrades"><option value="time">time</option><option value="net">net pnl</option><option value="magnitude">magnitude</option><option value="spread">spread</option></select></label>
+    <span id="tradeSummary" class="muted"></span>
+  </div>
+  <div class="table-scroll">
+    <table id="trades"><thead><tr>
+      <th>inspect</th><th>event</th><th>id</th><th>time UTC</th><th>signal</th><th>dir</th><th>σ</th>
+      <th>venue</th><th>entry VWAP</th><th>entry exec</th><th>exit VWAP</th><th>exit exec</th>
+      <th>reason</th><th>gross</th><th>fee</th><th>slip</th><th>net</th>
+      <th>spread entry</th><th>spread exit</th><th>hold</th><th>MFE</th><th>MAE</th><th>hit</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
 </section>
 </main>
 <script src="app.js"></script>
 <script>
-(async () => {
-  const id = qs("id");
-  if (!id) {
-    document.getElementById("list").hidden = false;
-    const rows = await fetchJSON("/api/backtests");
-    fillTable("#bts", rows, r => [
-      linkTo(`backtest.html?id=${r.id}`, r.id), r.strategy, r.session_id,
-      r.n_trades, fmt(r.total_net_pnl_bps), pct(r.win_rate), fmt(r.sharpe),
-    ]);
-    return;
-  }
+let btId = qs("id");
+let meta = {};
+let stats = {};
+let equity = [];
+let trades = [];
+let filteredTrades = [];
+
+const plotLayout = {
+  paper_bgcolor: "#0e1117",
+  plot_bgcolor: "#0e1117",
+  font: { color: "#c9d1d9" },
+  margin: { t: 26, r: 55, b: 45, l: 55 },
+};
+const plotConfig = { responsive: true, displayModeBar: true };
+
+async function init() {
+  if (!btId) return showList();
   document.getElementById("detail").hidden = false;
-  const meta = await fetchJSON(`/api/backtests/${id}/meta`);
-  document.getElementById("title").textContent = `${meta.strategy_name || id}`;
-  const kv = document.getElementById("meta"); kv.innerHTML = "";
-  const add = (k, v) => { kv.appendChild(el("div",{class:"k"},[k])); kv.appendChild(el("div",{},[String(v ?? "—")])); };
-  add("session_id", meta.session_id);
-  add("created_at", meta.created_at);
-  add("slippage_model", meta.slippage_model);
-  add("position_mode", meta.position_mode);
-  add("params", JSON.stringify(meta.params || {}));
+  document.getElementById("kpis").hidden = false;
+  document.getElementById("detailCharts").hidden = false;
+  document.getElementById("tradesSection").hidden = false;
+  meta = await fetchJSON(`/api/backtests/${btId}/meta`);
+  stats = await fetchJSON(`/api/backtests/${btId}/stats`);
+  equity = await fetchJSON(`/api/backtests/${btId}/equity`);
+  trades = await fetchJSON(`/api/backtests/${btId}/trades`);
+  renderHeader();
+  renderCards();
+  renderEquity();
+  renderDistributions();
+  renderBreakdowns();
+  setupTradeFilters();
+  applyTradeFilters();
+  document.getElementById("status").textContent = "";
+}
 
-  const stats = await fetchJSON(`/api/backtests/${id}/stats`);
-  document.getElementById("stats").textContent = JSON.stringify(stats, null, 2);
-
-  const equity = await fetchJSON(`/api/backtests/${id}/equity`);
-  const chart = document.getElementById("equityChart");
-  const drawEquity = () => {
-    const layers = document.getElementById("layers").checked;
-    const xs = equity.map(r => r.ts_ms);
-    const traces = [{x: xs, y: equity.map(r => r.net_equity_bps), name: "net", mode:"lines"}];
-    if (layers) {
-      traces.push({x: xs, y: equity.map(r => r.gross_equity_bps), name: "gross", mode:"lines"});
-      traces.push({x: xs, y: equity.map(r => r.post_fee_equity_bps), name: "post-fee", mode:"lines"});
-    }
-    Plotly.newPlot(chart, traces,
-      { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"},
-        margin:{t:20}, xaxis:{title:"ts_ms"}, yaxis:{title:"bps"} },
-      { displayModeBar:false });
-  };
-  drawEquity();
-  document.getElementById("layers").onchange = drawEquity;
-
-  const trades = await fetchJSON(`/api/backtests/${id}/trades`);
-  fillTable("#trades", trades, t => [
-    linkTo(`trade.html?backtest=${id}&trade=${t.trade_id}`, t.trade_id),
-    t.signal_bin_idx, t.signal_type, t.venue, t.side,
-    fmt(t.entry_price_exec, 4), fmt(t.exit_price_exec, 4),
-    fmt(t.gross_pnl_bps), fmt(t.fee_total_bps), fmt(t.slippage_total_bps),
-    fmt(t.net_pnl_bps), t.exit_reason, fmt(t.spread_at_entry_bps),
+async function showList() {
+  document.getElementById("list").hidden = false;
+  const rows = await fetchJSON("/api/backtests");
+  document.getElementById("listStatus").textContent = rows.length ? "" : "No backtests saved yet.";
+  fillTable("#bts", rows, r => [
+    linkTo(`backtest.html?id=${r.id}`, r.id),
+    r.strategy,
+    r.session_id,
+    r.n_trades,
+    fmt(r.total_net_pnl_bps),
+    fmt(r.avg_trade_bps),
+    pct(r.win_rate),
+    fmt(r.sharpe),
+    linkTo(`montecarlo.html?backtest=${r.id}`, "open"),
   ]);
+}
+
+function renderHeader() {
+  document.getElementById("title").textContent = `${meta.strategy_name || btId} on ${meta.session_id || "session"}`;
+  document.getElementById("mcLink").href = `montecarlo.html?backtest=${btId}`;
+  document.getElementById("sessionLink").href = `explorer.html?session=${meta.session_id || ""}`;
+  document.getElementById("exportJson").onclick = () => {
+    const blob = new Blob([JSON.stringify({ meta, stats, equity, trades }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${btId}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  const kv = document.getElementById("meta");
+  kv.innerHTML = "";
+  [
+    ["strategy", meta.strategy_name],
+    ["version", meta.strategy_version],
+    ["session", meta.session_id],
+    ["created", meta.backtest_date_utc || meta.created_at],
+    ["computation", `${fmt(Number(meta.computation_time_s || 0), 3)}s`],
+    ["slippage", meta.slippage_model],
+    ["entry type", meta.entry_type],
+    ["position mode", meta.position_mode],
+    ["params override", JSON.stringify(meta.params_override || {})],
+  ].forEach(([k, v]) => {
+    kv.appendChild(el("div", { class: "k" }, [k]));
+    kv.appendChild(el("div", {}, [String(v ?? "—")]));
+  });
+}
+
+function renderCards() {
+  const cards = [
+    ["Total Net", `${signed(Number(stats.total_net_pnl_bps || 0))} bps`],
+    ["Trades", stats.n_trades || 0],
+    ["Win Rate", pct(stats.win_rate)],
+    ["Profit Factor", fmt(stats.profit_factor)],
+    ["Sharpe", fmt(stats.sharpe)],
+    ["Max DD", `${fmt(stats.max_drawdown_bps)} bps`],
+    ["Avg Trade", `${signed(Number(stats.avg_trade_bps || 0))} bps`],
+    ["Fees", `${fmt(stats.total_fees_bps)} bps`],
+    ["Slippage", `${fmt(stats.total_slippage_bps)} bps`],
+    ["Avg Spread", `${fmt(stats.avg_spread_at_entry_bps)} bps`],
+    ["Avg MFE", `${fmt(stats.avg_mfe_bps)} bps`],
+    ["Avg MAE", `${fmt(stats.avg_mae_bps)} bps`],
+  ];
+  const box = document.getElementById("kpis");
+  box.innerHTML = "";
+  cards.forEach(([label, value]) => box.appendChild(el("div", { class: "metric-card" }, [
+    el("div", { class: "metric-label" }, [label]),
+    el("div", { class: "metric-value" }, [String(value)]),
+  ])));
+}
+
+function renderEquity() {
+  const xs = equity.map(r => new Date(Number(r.ts_ms)));
+  const on = value => [...document.querySelectorAll(".layerToggle")].some(i => i.value === value && i.checked);
+  const traces = [];
+  if (on("gross")) traces.push({ x: xs, y: equity.map(r => r.gross_equity_bps), name: "Gross", mode: "lines", yaxis: "y" });
+  if (on("post_fee")) traces.push({ x: xs, y: equity.map(r => r.post_fee_equity_bps), name: "Gross - Fees", mode: "lines", yaxis: "y" });
+  if (on("net")) traces.push({ x: xs, y: equity.map(r => r.net_equity_bps), name: "Net", mode: "lines+markers", yaxis: "y",
+    customdata: equity.map(r => r.trade_id), marker: { size: 7, color: equity.map(r => tradeById(r.trade_id)?.net_pnl_bps >= 0 ? "#3fb950" : "#f85149") } });
+  traces.push({ x: xs, y: equity.map(r => r.drawdown_bps), name: "Drawdown", mode: "lines", fill: "tozeroy", yaxis: "y2", line: { color: "#f85149" } });
+  const layout = {
+    ...plotLayout,
+    hovermode: "x unified",
+    xaxis: { title: "UTC" },
+    yaxis: { title: "cumulative bps", domain: [0.32, 1.0] },
+    yaxis2: { title: "drawdown bps", domain: [0.0, 0.22] },
+    legend: { orientation: "h", y: 1.08 },
+  };
+  Plotly.react("equityChart", traces, layout, plotConfig);
+  document.getElementById("equityChart").on("plotly_click", ev => {
+    const tid = ev.points && ev.points[0] && ev.points[0].customdata;
+    if (tid !== undefined && tid !== null) location.href = `trade.html?backtest=${btId}&trade=${tid}`;
+  });
+}
+
+function renderDistributions() {
+  Plotly.react("pnlHist", [{ x: trades.map(t => t.net_pnl_bps), type: "histogram", name: "Net PnL" }], {
+    ...plotLayout, title: { text: "PnL per trade" }, xaxis: { title: "net bps" }, yaxis: { title: "count" },
+  }, plotConfig);
+  Plotly.react("holdHist", [{ x: trades.map(t => t.hold_ms), type: "histogram", name: "Hold" }], {
+    ...plotLayout, title: { text: "Hold times" }, xaxis: { title: "ms" }, yaxis: { title: "count" },
+  }, plotConfig);
+  scatter("magnitudeScatter", trades.map(t => t.magnitude_sigma), trades.map(t => t.net_pnl_bps), "Magnitude vs PnL", "sigma", "net bps");
+  scatter("timeScatter", trades.map(t => new Date(Number(t.entry_ts_ms)).getUTCHours() + new Date(Number(t.entry_ts_ms)).getUTCMinutes() / 60), trades.map(t => t.net_pnl_bps), "Time of day vs PnL", "UTC hour", "net bps");
+  scatter("spreadScatter", trades.map(t => t.spread_at_entry_bps), trades.map(t => t.net_pnl_bps), "Spread at entry vs PnL", "spread bps", "net bps");
+}
+
+function scatter(id, x, y, title, xt, yt) {
+  Plotly.react(id, [{ x, y, type: "scatter", mode: "markers", marker: { color: y.map(v => Number(v) >= 0 ? "#3fb950" : "#f85149"), size: 7 }, customdata: trades.map(t => t.trade_id) }], {
+    ...plotLayout, title: { text: title }, xaxis: { title: xt }, yaxis: { title: yt },
+  }, plotConfig);
+  document.getElementById(id).on("plotly_click", ev => {
+    const tid = ev.points && ev.points[0] && ev.points[0].customdata;
+    if (tid !== undefined && tid !== null) location.href = `trade.html?backtest=${btId}&trade=${tid}`;
+  });
+}
+
+function renderBreakdowns() {
+  const impact = stats.fee_impact || {};
+  fillTable("#impact", [
+    ["Gross", impact.gross_bps],
+    ["Fees", -Math.abs(Number(impact.fees_bps || 0))],
+    ["Slippage", -Math.abs(Number(impact.slippage_bps || 0))],
+    ["Net", impact.net_bps],
+  ], r => [r[0], signed(Number(r[1] || 0))]);
+  fillGroupTable("#spreadBuckets", stats.by_spread_bucket || {});
+  fillRichGroupTable("#byVenue", stats.by_venue || {});
+  fillGroupTable("#bySignal", stats.by_signal || {});
+}
+
+function fillGroupTable(sel, obj) {
+  const rows = Object.entries(obj).map(([k, v]) => ({ key: k, ...v }));
+  fillTable(sel, rows, r => [r.key, r.n, fmt(r.avg_net_pnl_bps ?? r.avg_pnl_bps), pct(r.win_rate)]);
+}
+function fillRichGroupTable(sel, obj) {
+  const rows = Object.entries(obj).map(([k, v]) => ({ key: k, ...v }));
+  fillTable(sel, rows, r => [r.key, r.n, fmt(r.avg_pnl_bps), fmt(r.avg_fee_bps), fmt(r.avg_slippage_bps), pct(r.win_rate)]);
+}
+
+function setupTradeFilters() {
+  const venues = [...new Set(trades.map(t => t.venue))].sort();
+  const exits = [...new Set(trades.map(t => t.exit_reason))].sort();
+  document.getElementById("venueFilter").innerHTML = `<option value="">All</option>` + venues.map(v => `<option value="${v}">${v}</option>`).join("");
+  document.getElementById("exitFilter").innerHTML = `<option value="">All</option>` + exits.map(v => `<option value="${v}">${v}</option>`).join("");
+  ["signalFilter", "venueFilter", "pnlFilter", "exitFilter", "spreadFilter", "sortTrades"].forEach(id => {
+    document.getElementById(id).onchange = applyTradeFilters;
+  });
+}
+
+function applyTradeFilters() {
+  const sig = document.getElementById("signalFilter").value;
+  const venue = document.getElementById("venueFilter").value;
+  const pnl = document.getElementById("pnlFilter").value;
+  const exit = document.getElementById("exitFilter").value;
+  const spread = document.getElementById("spreadFilter").value;
+  filteredTrades = trades.filter(t => {
+    if (sig && t.signal_type !== sig) return false;
+    if (venue && t.venue !== venue) return false;
+    if (pnl === "profit" && Number(t.net_pnl_bps) <= 0) return false;
+    if (pnl === "loss" && Number(t.net_pnl_bps) >= 0) return false;
+    if (exit && t.exit_reason !== exit) return false;
+    if (spread && bucketOf(t.spread_at_entry_bps) !== spread) return false;
+    return true;
+  });
+  const sort = document.getElementById("sortTrades").value;
+  if (sort === "net") filteredTrades.sort((a, b) => Number(b.net_pnl_bps) - Number(a.net_pnl_bps));
+  else if (sort === "magnitude") filteredTrades.sort((a, b) => Number(b.magnitude_sigma) - Number(a.magnitude_sigma));
+  else if (sort === "spread") filteredTrades.sort((a, b) => Number(b.spread_at_entry_bps || -1) - Number(a.spread_at_entry_bps || -1));
+  else filteredTrades.sort((a, b) => Number(a.entry_ts_ms) - Number(b.entry_ts_ms));
+  renderTradesTable();
+}
+
+function renderTradesTable() {
+  document.getElementById("tradeSummary").textContent = `Showing ${filteredTrades.length} of ${trades.length} trades`;
+  fillTable("#trades", filteredTrades, t => [
+    linkTo(`trade.html?backtest=${btId}&trade=${t.trade_id}`, "Inspect"),
+    linkTo(`explorer.html?session=${meta.session_id}&event=${t.signal_bin_idx}&mode=trade&backtest=${btId}&trade=${t.trade_id}`, "View Event"),
+    t.trade_id,
+    utc(t.entry_ts_ms),
+    t.signal_type,
+    Number(t.direction) > 0 ? "UP" : "DOWN",
+    fmt(t.magnitude_sigma),
+    t.venue,
+    fmt(t.entry_price_vwap, 4),
+    fmt(t.entry_price_exec, 4),
+    fmt(t.exit_price_vwap, 4),
+    fmt(t.exit_price_exec, 4),
+    t.exit_reason,
+    signed(Number(t.gross_pnl_bps)),
+    `${fmt(t.fee_total_bps)} (${t.fee_type_entry || t.fee_type}/${t.fee_type_exit || "taker"})`,
+    `${fmt(t.slippage_total_bps)} (${t.slippage_source_entry || t.slippage_source})`,
+    signed(Number(t.net_pnl_bps)),
+    t.spread_at_entry_bps === null ? "N/A" : fmt(t.spread_at_entry_bps),
+    t.spread_at_exit_bps === null ? "N/A" : fmt(t.spread_at_exit_bps),
+    fmt(t.hold_ms, 0),
+    fmt(t.mfe_bps),
+    fmt(t.mae_bps),
+    Number(t.net_pnl_bps) > 0 ? "yes" : "no",
+  ]);
+  document.querySelectorAll("#trades tbody tr").forEach((tr, i) => {
+    tr.classList.toggle("profit-row", Number(filteredTrades[i].net_pnl_bps) >= 0);
+    tr.classList.toggle("loss-row", Number(filteredTrades[i].net_pnl_bps) < 0);
+  });
+}
+
+function bucketOf(spread) {
+  if (spread === null || spread === undefined || Number.isNaN(Number(spread))) return "N/A";
+  const s = Number(spread);
+  if (s <= 1) return "0-1";
+  if (s <= 2) return "1-2";
+  if (s <= 5) return "2-5";
+  return "5+";
+}
+function tradeById(id) {
+  return trades.find(t => Number(t.trade_id) === Number(id));
+}
+
+document.querySelectorAll(".layerToggle").forEach(input => input.onchange = renderEquity);
+
+(async () => {
+  try {
+    await init();
+  } catch (err) {
+    showError("main", err);
+  }
 })();
 </script>
 </body>

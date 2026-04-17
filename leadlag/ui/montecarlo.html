@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>leadlag - monte carlo</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+<header><h1>Monte Carlo</h1>
+<nav>
+  <a href="dashboard.html">Dashboard</a>
+  <a href="explorer.html">Explorer</a>
+  <a href="strategy.html">Strategies</a>
+  <a href="backtest.html">Backtests</a>
+  <a href="montecarlo.html">Monte Carlo</a>
+</nav>
+</header>
+<main>
+<section>
+  <div class="toolbar">
+    <label>Backtest <select id="backtest"></select></label>
+    <label>Simulations <input id="nSim" type="number" min="100" step="100" value="10000"></label>
+    <label>Method <select id="method">
+      <option value="trade_shuffle">Trade shuffle</option>
+      <option value="return_shuffle">Return shuffle</option>
+      <option value="block_bootstrap">Block bootstrap</option>
+    </select></label>
+    <label>Block size <input id="blockSize" type="number" min="1" step="1" value="10"></label>
+    <label>Seed <input id="seed" type="number" step="1" value="42"></label>
+    <button id="run">Run</button>
+    <button id="refresh">Refresh Results</button>
+    <a id="backLink" class="button-link" href="backtest.html">Back to Backtest</a>
+  </div>
+  <div id="status" class="muted">Loading backtests...</div>
+</section>
+
+<section id="cards" class="cards" hidden></section>
+
+<section id="charts" hidden>
+  <h2>Equity Curves</h2>
+  <div class="chart tall" id="equityFan"></div>
+  <h2>Distributions</h2>
+  <div class="chart-grid">
+    <div class="chart small" id="finalHist"></div>
+    <div class="chart small" id="sharpeHist"></div>
+    <div class="chart small" id="ddHist"></div>
+  </div>
+</section>
+</main>
+<script src="app.js"></script>
+<script>
+let backtests = [];
+let currentId = qs("backtest");
+let meta = {};
+let equity = [];
+let mc = {};
+
+const layoutBase = {
+  paper_bgcolor: "#0e1117",
+  plot_bgcolor: "#0e1117",
+  font: { color: "#c9d1d9" },
+  margin: { t: 26, r: 55, b: 45, l: 55 },
+};
+const config = { responsive: true, displayModeBar: true };
+
+async function init() {
+  backtests = await fetchJSON("/api/backtests");
+  const sel = document.getElementById("backtest");
+  if (!backtests.length) {
+    document.getElementById("status").textContent = "No saved backtests yet.";
+    return;
+  }
+  sel.innerHTML = backtests.map(b => `<option value="${b.id}">${b.id} (${b.n_trades} trades)</option>`).join("");
+  if (currentId && backtests.some(b => b.id === currentId)) sel.value = currentId;
+  currentId = sel.value;
+  sel.onchange = () => loadBacktest(sel.value);
+  document.getElementById("run").onclick = runMonteCarlo;
+  document.getElementById("refresh").onclick = () => loadBacktest(currentId);
+  await loadBacktest(currentId);
+}
+
+async function loadBacktest(id) {
+  currentId = id;
+  setQS({ backtest: id });
+  document.getElementById("backLink").href = `backtest.html?id=${id}`;
+  document.getElementById("status").textContent = "Loading Monte Carlo results...";
+  meta = await fetchJSON(`/api/backtests/${id}/meta`);
+  equity = await fetchJSON(`/api/backtests/${id}/equity`);
+  mc = await fetchJSON(`/api/backtests/${id}/montecarlo`);
+  if (!mc || !mc.n_simulations) {
+    document.getElementById("cards").hidden = true;
+    document.getElementById("charts").hidden = true;
+    document.getElementById("status").textContent = "No Monte Carlo result yet. Choose settings and run.";
+    return;
+  }
+  document.getElementById("status").textContent = "";
+  renderCards();
+  renderCharts();
+}
+
+async function runMonteCarlo() {
+  document.getElementById("status").textContent = "Running Monte Carlo...";
+  try {
+    await postJSON(`/api/backtests/${currentId}/montecarlo/run`, {
+      n_simulations: Number(document.getElementById("nSim").value || 10000),
+      method: document.getElementById("method").value,
+      block_size: Number(document.getElementById("blockSize").value || 10),
+      seed: Number(document.getElementById("seed").value || 42),
+    });
+    await loadBacktest(currentId);
+  } catch (err) {
+    showError("#status", err);
+  }
+}
+
+function renderCards() {
+  const cards = [
+    ["p-value", pct(mc.p_value)],
+    ["Percentile", `${fmt(mc.percentile)}%`],
+    ["Real PnL", `${signed(Number(mc.real_pnl || 0))} bps`],
+    ["Median Sim", `${signed(Number(mc.median_sim_pnl || 0))} bps`],
+    ["5th PnL", `${signed(Number(mc.pnl_5th || 0))} bps`],
+    ["95th PnL", `${signed(Number(mc.pnl_95th || 0))} bps`],
+    ["Probability Profit", pct(mc.prob_of_profit)],
+    ["Simulations", mc.n_simulations],
+    ["Method", mc.method],
+  ];
+  const box = document.getElementById("cards");
+  box.hidden = false;
+  box.innerHTML = "";
+  cards.forEach(([label, value]) => box.appendChild(el("div", { class: "metric-card" }, [
+    el("div", { class: "metric-label" }, [label]),
+    el("div", { class: "metric-value" }, [String(value)]),
+  ])));
+}
+
+function renderCharts() {
+  document.getElementById("charts").hidden = false;
+  const curves = mc.sim_equity_curves || [];
+  const traces = curves.slice(0, 1000).map(row => ({
+    x: row.map((_, i) => i + 1),
+    y: row,
+    type: "scatter",
+    mode: "lines",
+    showlegend: false,
+    hoverinfo: "skip",
+    line: { color: "rgba(139,148,158,0.13)", width: 1 },
+  }));
+  const real = equity.map(r => r.net_equity_bps);
+  if (real.length) {
+    traces.push({ x: real.map((_, i) => i + 1), y: real, name: "real equity", type: "scatter", mode: "lines", line: { color: "#3fb950", width: 3 } });
+  }
+  if (curves.length) {
+    const percentiles = perTradePercentiles(curves);
+    traces.push({ x: percentiles.x, y: percentiles.p5, name: "5th percentile", mode: "lines", line: { color: "#d29922", dash: "dash" } });
+    traces.push({ x: percentiles.x, y: percentiles.p50, name: "median", mode: "lines", line: { color: "#58a6ff", width: 2 } });
+    traces.push({ x: percentiles.x, y: percentiles.p95, name: "95th percentile", mode: "lines", line: { color: "#d29922", dash: "dash" } });
+  }
+  Plotly.react("equityFan", traces, {
+    ...layoutBase,
+    xaxis: { title: "trade number" },
+    yaxis: { title: "cumulative bps" },
+    legend: { orientation: "h", y: 1.08 },
+  }, config);
+  histogram("finalHist", mc.sim_final_pnls || [], "Final PnL", "bps", mc.real_pnl);
+  histogram("sharpeHist", mc.sim_sharpes || [], "Sharpe", "ratio", null);
+  histogram("ddHist", mc.sim_max_dds || [], "Max Drawdown", "bps", null);
+}
+
+function histogram(id, values, title, xTitle, marker) {
+  const traces = [{ x: values, type: "histogram", name: title, marker: { color: "#58a6ff" } }];
+  const shapes = [];
+  if (marker !== null && marker !== undefined) {
+    shapes.push({ type: "line", xref: "x", yref: "paper", x0: marker, x1: marker, y0: 0, y1: 1, line: { color: "#3fb950", width: 2 } });
+  }
+  Plotly.react(id, traces, {
+    ...layoutBase,
+    title: { text: title },
+    xaxis: { title: xTitle },
+    yaxis: { title: "count" },
+    shapes,
+  }, config);
+}
+
+function perTradePercentiles(curves) {
+  const n = Math.max(...curves.map(c => c.length));
+  const x = [];
+  const p5 = [];
+  const p50 = [];
+  const p95 = [];
+  for (let i = 0; i < n; i++) {
+    const vals = curves.map(c => c[i]).filter(v => v !== null && v !== undefined && Number.isFinite(Number(v))).sort((a, b) => a - b);
+    if (!vals.length) continue;
+    x.push(i + 1);
+    p5.push(percentile(vals, 0.05));
+    p50.push(percentile(vals, 0.50));
+    p95.push(percentile(vals, 0.95));
+  }
+  return { x, p5, p50, p95 };
+}
+
+function percentile(sorted, p) {
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))));
+  return sorted[idx];
+}
+
+(async () => {
+  try {
+    await init();
+  } catch (err) {
+    showError("main", err);
+  }
+})();
+</script>
+</body>
+</html>
