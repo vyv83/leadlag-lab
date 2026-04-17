@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import psutil
+import pandas as pd
 
 
 def system_stats() -> dict[str, Any]:
@@ -35,6 +37,7 @@ def system_stats() -> dict[str, Any]:
         "ram_percent": vm.percent,
         "disk_total_gb": round(du.total / 1e9, 2),
         "disk_used_gb": round(du.used / 1e9, 2),
+        "disk_data_gb": round(_dir_size(Path("data")) / 1e9, 2),
         "net_bytes_sent": net_sent,
         "net_bytes_recv": net_recv,
     }
@@ -94,5 +97,87 @@ def list_data_files(data_dir: Path | str = "data") -> list[dict]:
             "path": str(p.relative_to(root)),
             "size_mb": round(st.st_size / 1e6, 3),
             "modified": int(st.st_mtime * 1000),
+            **_parquet_brief(p),
         })
     return out
+
+
+def read_collector_log(data_dir: Path | str = "data", since_ts: int | None = None, venue: str | None = None, event_type: str | None = None) -> list[dict]:
+    p = Path(data_dir) / ".collector_log.jsonl"
+    if not p.exists():
+        return []
+    rows = []
+    with p.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            if since_ts is not None and int(row.get("ts_ms", 0)) < since_ts:
+                continue
+            if venue and row.get("venue") != venue:
+                continue
+            if event_type and row.get("event_type") != event_type:
+                continue
+            rows.append(row)
+    return rows[-1000:]
+
+
+def system_processes() -> list[dict]:
+    wanted = {
+        "leadlag-api": ("uvicorn", "leadlag.api"),
+        "leadlag-collector": ("leadlag.collector",),
+        "leadlag-paper": ("leadlag.paper", "paper_trade"),
+        "leadlag-monitor": ("leadlag.monitor",),
+        "jupyter-lab": ("jupyter", "jupyter-lab"),
+    }
+    now = time.time()
+    rows = {name: {"name": name, "status": "stopped", "pid": None, "mem_mb": 0.0, "uptime_s": 0} for name in wanted}
+    for proc in psutil.process_iter(["pid", "name", "cmdline", "status", "memory_info", "create_time"]):
+        try:
+            info = proc.info
+            cmd = " ".join(info.get("cmdline") or [info.get("name") or ""])
+            for service, needles in wanted.items():
+                if any(n in cmd for n in needles):
+                    mem = info.get("memory_info")
+                    rows[service] = {
+                        "name": service,
+                        "status": info.get("status") or "running",
+                        "pid": info.get("pid"),
+                        "mem_mb": round((mem.rss if mem else 0) / 1e6, 1),
+                        "uptime_s": int(now - float(info.get("create_time") or now)),
+                    }
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return list(rows.values())
+
+
+def _parquet_brief(path: Path) -> dict:
+    try:
+        df = pd.read_parquet(path, columns=["ts_ms", "venue"])
+        ts = pd.to_numeric(df.get("ts_ms"), errors="coerce")
+        venues = sorted(str(v) for v in df.get("venue", pd.Series(dtype=str)).dropna().unique())
+        return {
+            "rows": int(len(df)),
+            "ts_min": int(ts.min()) if len(ts.dropna()) else None,
+            "ts_max": int(ts.max()) if len(ts.dropna()) else None,
+            "venues": venues,
+        }
+    except Exception:
+        return {"rows": None, "ts_min": None, "ts_max": None, "venues": []}
+
+
+def _dir_size(path: Path) -> int:
+    if not path.exists():
+        return 0
+    total = 0
+    for p in path.rglob("*"):
+        if p.is_file():
+            try:
+                total += p.stat().st_size
+            except OSError:
+                pass
+    return total

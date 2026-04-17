@@ -24,8 +24,9 @@ from fastapi.staticfiles import StaticFiles
 from leadlag import load_session, load_strategy, run_backtest, list_sessions as core_list_sessions, run_monte_carlo
 from leadlag.backtest import BacktestResult
 from leadlag.contracts import ContractError, read_json
-from leadlag.monitor import system_stats, read_history, read_pings, list_data_files
+from leadlag.monitor import system_stats, read_history, read_pings, list_data_files, read_collector_log, system_processes
 from leadlag.monitor.snapshot import read_collector_status
+from leadlag.venues import REGISTRY
 
 
 DATA_DIR = Path("data")
@@ -295,6 +296,29 @@ def api_system_files():
     return list_data_files(DATA_DIR)
 
 
+@app.get("/api/system/processes")
+def api_system_processes():
+    return system_processes()
+
+
+@app.get("/api/venues")
+def api_venues():
+    return [
+        {
+            "name": name,
+            "role": cfg.role,
+            "enabled": cfg.enabled,
+            "ws_url": cfg.ws_url,
+            "taker_fee_bps": cfg.taker_fee_bps,
+            "maker_fee_bps": cfg.maker_fee_bps,
+            "bbo_available": cfg.bbo_available,
+            "keepalive_type": cfg.keepalive_type,
+            "keepalive_interval": cfg.keepalive_interval,
+        }
+        for name, cfg in REGISTRY.items()
+    ]
+
+
 # ─── collector ───
 
 @app.get("/api/collector/status")
@@ -302,6 +326,16 @@ def api_collector_status():
     st = read_collector_status(DATA_DIR)
     st["proc_alive"] = COLLECTOR_PROC is not None and COLLECTOR_PROC.poll() is None
     return st
+
+
+@app.get("/api/collector/log")
+def api_collector_log(since_ts: Optional[int] = None, venue: Optional[str] = None, type: Optional[str] = None):
+    return read_collector_log(DATA_DIR, since_ts=since_ts, venue=venue, event_type=type)
+
+
+@app.get("/api/collector/files")
+def api_collector_files():
+    return [f for f in list_data_files(DATA_DIR) if f["path"].startswith(("ticks/", "bbo/"))]
 
 
 @app.post("/api/collector/start")

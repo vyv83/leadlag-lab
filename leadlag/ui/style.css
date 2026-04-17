@@ -24,6 +24,7 @@ a:hover { text-decoration: underline; }
 .filters button:hover, .toolbar button:hover, .button-link:hover { background: #21262d; text-decoration: none; }
 .segmented button.active { border-color: #58a6ff; background: #0d419d; color: #fff; }
 .button-link.disabled { opacity: 0.45; pointer-events: none; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
 .kv { display: grid; grid-template-columns: 200px 1fr; row-gap: 4px; font-size: 13px; }
 .kv.compact { grid-template-columns: 150px 1fr; }
 .kv .k { color: #8b949e; }
@@ -75,6 +76,12 @@ h3 { font-size: 13px; color: #8b949e; font-weight: 600; margin: 0 0 8px; }
 .table-scroll { max-height: 720px; overflow: auto; border: 1px solid #21262d; }
 .profit-row td { background: rgba(63,185,80,0.035); }
 .loss-row td { background: rgba(248,81,73,0.04); }
+.log-box {
+  height: 420px; overflow: auto; border: 1px solid #21262d; background: #0b0d12;
+  padding: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; border-radius: 4px;
+}
+.log-box div { padding: 2px 0; border-bottom: 1px solid rgba(48,54,61,0.45); }
 @media (max-width: 980px) {
   .explorer-grid, .trade-grid { grid-template-columns: 1fr; }
   aside { border-left: 0; padding-left: 0; }

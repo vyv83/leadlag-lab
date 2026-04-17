@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>leadlag — dashboard</title>
+<title>leadlag - dashboard</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
@@ -10,77 +10,203 @@
 <header><h1>leadlag-platform</h1>
 <nav>
   <a href="dashboard.html">Dashboard</a>
-  <a href="explorer.html">Explorer</a>
   <a href="collector.html">Collector</a>
+  <a href="explorer.html">Explorer</a>
   <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
   <a href="backtest.html">Backtests</a>
+  <a href="montecarlo.html">Monte Carlo</a>
 </nav>
 </header>
 <main>
+<section class="cards" id="topCards"></section>
+
 <section>
-  <h2>System</h2>
-  <div class="kv" id="sys"></div>
-  <div class="chart" id="cpuChart" style="height:200px"></div>
+  <h2>System Health</h2>
+  <div class="cards" id="systemCards"></div>
+  <div class="chart-grid">
+    <div class="chart small" id="cpuChart"></div>
+    <div class="chart small" id="ramChart"></div>
+    <div class="chart small" id="netChart"></div>
+  </div>
 </section>
+
+<section class="breakdown-grid">
+  <div>
+    <h2>Processes</h2>
+    <table id="processes"><thead><tr><th>name</th><th>status</th><th>pid</th><th>mem MB</th><th>uptime</th></tr></thead><tbody></tbody></table>
+  </div>
+  <div>
+    <h2>Pings to Venues</h2>
+    <table id="pings"><thead><tr><th>venue</th><th>host</th><th>latency</th><th>status</th></tr></thead><tbody></tbody></table>
+  </div>
+</section>
+
 <section>
-  <h2>Exchange ping</h2>
-  <table id="pings"><thead><tr>
-    <th>venue</th><th>host</th><th>latency ms</th><th>status</th>
+  <h2>Collector Status</h2>
+  <div class="toolbar">
+    <button id="startCollector">Start Collection</button>
+    <button id="stopCollector">Stop Collector</button>
+    <a class="button-link" href="collector.html">Open Collector</a>
+    <a id="openLatest" class="button-link" href="explorer.html">Open Latest Session</a>
+    <a class="button-link" href="http://127.0.0.1:8888" target="_blank">Open Jupyter</a>
+  </div>
+  <table id="collectorVenues"><thead><tr>
+    <th>venue</th><th>role</th><th>status</th><th>ticks</th><th>ticks/s</th><th>BBO</th><th>BBO/s</th>
+    <th>reconnects</th><th>last tick UTC</th><th>seconds idle</th><th>last price</th><th>last error</th>
   </tr></thead><tbody></tbody></table>
 </section>
-<section>
-  <h2>Sessions</h2>
-  <table id="sessions"><thead><tr>
-    <th>id</th><th>collection</th><th>params_hash</th>
-    <th>n_events</th><th>n_C</th>
-  </tr></thead><tbody></tbody></table>
+
+<section class="breakdown-grid">
+  <div>
+    <h2>Latest Sessions</h2>
+    <table id="sessions"><thead><tr><th>id</th><th>date</th><th>events</th><th>A/B/C</th><th>venues</th></tr></thead><tbody></tbody></table>
+  </div>
+  <div>
+    <h2>Latest Backtests</h2>
+    <table id="backtests"><thead><tr><th>id</th><th>strategy</th><th>trades</th><th>net</th><th>win</th><th>MC</th></tr></thead><tbody></tbody></table>
+  </div>
 </section>
+
 <section>
-  <h2>Backtests</h2>
-  <table id="backtests"><thead><tr>
-    <th>id</th><th>strategy</th><th>session</th>
-    <th>n_trades</th><th>net_bps</th><th>win</th><th>sharpe</th>
-  </tr></thead><tbody></tbody></table>
+  <h2>Active Files</h2>
+  <table id="files"><thead><tr><th>path</th><th>size MB</th><th>rows</th><th>time range UTC</th><th>venues</th><th>modified UTC</th></tr></thead><tbody></tbody></table>
 </section>
 </main>
 <script src="app.js"></script>
 <script>
-async function refreshSystem() {
-  const st = await fetchJSON("/api/system/stats");
-  const sys = document.getElementById("sys"); sys.innerHTML = "";
-  const add = (k, v) => { sys.appendChild(el("div",{class:"k"},[k])); sys.appendChild(el("div",{},[String(v)])); };
-  add("CPU %", st.cpu_percent);
-  add("RAM", `${st.ram_used_gb} / ${st.ram_total_gb} GB (${st.ram_percent}%)`);
-  add("Disk", `${st.disk_used_gb} / ${st.disk_total_gb} GB`);
-  add("Net", `sent ${st.net_bytes_sent} / recv ${st.net_bytes_recv}`);
-  const hist = await fetchJSON("/api/system/history?minutes=60");
-  if (hist.length) {
-    Plotly.newPlot("cpuChart",
-      [{x: hist.map(r=>r.ts), y: hist.map(r=>r.cpu_pct), mode:"lines", name:"cpu %"}],
-      { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"},
-        margin:{t:10,l:40,r:10,b:30}, yaxis:{title:"cpu %"} },
-      { displayModeBar:false });
-  }
-  const pings = await fetchJSON("/api/system/pings");
-  const rows = Object.entries(pings.venues || {}).map(([v, r]) => ({venue:v, ...r}));
-  fillTable("#pings", rows, r => [r.venue, r.host, fmt(r.latency_ms, 1), r.status]);
+const plotBase = { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"}, margin:{t:24,l:45,r:20,b:35} };
+const plotCfg = { responsive:true, displayModeBar:true };
+
+async function refreshAll() {
+  const [sys, hist, pings, processes, collector, sessions, backtests, files, paper] = await Promise.all([
+    fetchJSON("/api/system/stats"),
+    fetchJSON("/api/system/history?minutes=60"),
+    fetchJSON("/api/system/pings"),
+    fetchJSON("/api/system/processes"),
+    fetchJSON("/api/collector/status"),
+    fetchJSON("/api/sessions"),
+    fetchJSON("/api/backtests"),
+    fetchJSON("/api/system/files"),
+    fetchJSON("/api/paper/status"),
+  ]);
+  renderTop(sys, collector, paper, sessions, backtests);
+  renderSystem(sys, hist);
+  renderProcesses(processes);
+  renderPings(pings);
+  renderCollector(collector);
+  renderSessions(sessions);
+  renderBacktests(backtests);
+  renderFiles(files.slice(-8).reverse());
 }
 
-(async () => {
-  await refreshSystem();
-  setInterval(refreshSystem, 5000);
-  const s = await fetchJSON("/api/sessions");
-  fillTable("#sessions", s, r => [
+function renderTop(sys, collector, paper, sessions, backtests) {
+  const cards = [
+    ["UTC", utc(sys.ts)],
+    ["Sessions", `${sessions.length} total`],
+    ["Strategies", "scan in Strategies"],
+    ["Backtests", `${backtests.length} total`],
+    ["Collector", collector.running ? `running ${collector.session_id || ""}` : "stopped"],
+    ["Paper", paper.running ? "running" : "stopped"],
+  ];
+  fillCards("topCards", cards);
+  const latest = sessions[0];
+  const open = document.getElementById("openLatest");
+  open.href = latest ? `explorer.html?session=${latest.id}` : "explorer.html";
+  open.classList.toggle("disabled", !latest);
+}
+
+function renderSystem(sys, hist) {
+  fillCards("systemCards", [
+    ["CPU", `${fmt(sys.cpu_percent)}%`],
+    ["RAM", `${fmt(sys.ram_used_gb)} / ${fmt(sys.ram_total_gb)} GB (${fmt(sys.ram_percent)}%)`],
+    ["Disk", `${fmt(sys.disk_used_gb)} / ${fmt(sys.disk_total_gb)} GB`],
+    ["data/", `${fmt(sys.disk_data_gb)} GB`],
+    ["Net recv", String(sys.net_bytes_recv)],
+    ["Net sent", String(sys.net_bytes_sent)],
+  ]);
+  if (!hist.length) return;
+  const xs = hist.map(r => new Date(Number(r.ts)));
+  Plotly.react("cpuChart", [{x:xs,y:hist.map(r=>r.cpu_pct),mode:"lines",name:"CPU %"}], {...plotBase,title:{text:"CPU"},yaxis:{title:"%"},xaxis:{title:"UTC"}}, plotCfg);
+  Plotly.react("ramChart", [{x:xs,y:hist.map(r=>r.ram_used_gb),mode:"lines",name:"RAM GB"}], {...plotBase,title:{text:"RAM"},yaxis:{title:"GB"},xaxis:{title:"UTC"}}, plotCfg);
+  Plotly.react("netChart", [
+    {x:xs,y:hist.map(r=>r.net_down_bps || 0),mode:"lines",name:"down"},
+    {x:xs,y:hist.map(r=>r.net_up_bps || 0),mode:"lines",name:"up"},
+  ], {...plotBase,title:{text:"Network"},yaxis:{title:"bytes/s"},xaxis:{title:"UTC"}}, plotCfg);
+}
+
+function renderProcesses(rows) {
+  fillTable("#processes", rows, r => [r.name, r.status, r.pid, fmt(r.mem_mb, 1), seconds(r.uptime_s)]);
+}
+function renderPings(payload) {
+  const rows = Object.entries(payload.venues || {}).map(([venue, r]) => ({venue, ...r}));
+  fillTable("#pings", rows, r => [r.venue, r.host, fmt(r.latency_ms, 1), r.status]);
+}
+function renderCollector(st) {
+  document.getElementById("startCollector").disabled = !!st.running;
+  document.getElementById("stopCollector").disabled = !st.running;
+  fillTable("#collectorVenues", st.venues || [], r => [
+    r.name, r.role, r.status, r.ticks, fmt(r.ticks_per_s_1m), r.bbo, fmt(r.bbo_per_s),
+    r.reconnects, utc(r.last_tick_ts), fmt(r.seconds_since_last_tick), fmt(r.last_price, 2), r.last_error || "",
+  ]);
+}
+function renderSessions(rows) {
+  fillTable("#sessions", rows.slice(0, 8), r => [
     linkTo(`explorer.html?session=${r.id}`, r.id),
-    r.collection_id, r.params_hash, r.n_events, r.n_signal_c,
+    r.date,
+    r.n_events,
+    `${r.n_signal_a}/${r.n_signal_b}/${r.n_signal_c}`,
+    r.n_venues,
   ]);
-  const b = await fetchJSON("/api/backtests");
-  fillTable("#backtests", b, r => [
+}
+function renderBacktests(rows) {
+  fillTable("#backtests", rows.slice(-8).reverse(), r => [
     linkTo(`backtest.html?id=${r.id}`, r.id),
-    r.strategy, r.session_id, r.n_trades,
-    fmt(r.total_net_pnl_bps), pct(r.win_rate), fmt(r.sharpe),
+    r.strategy,
+    r.n_trades,
+    signed(Number(r.total_net_pnl_bps || 0)),
+    pct(r.win_rate),
+    r.has_montecarlo ? linkTo(`montecarlo.html?backtest=${r.id}`, "open") : linkTo(`montecarlo.html?backtest=${r.id}`, "run"),
   ]);
+}
+function renderFiles(rows) {
+  fillTable("#files", rows, f => [
+    f.path, f.size_mb, f.rows ?? "—",
+    f.ts_min ? `${utc(f.ts_min)} → ${utc(f.ts_max)}` : "—",
+    (f.venues || []).join(", "),
+    utc(f.modified),
+  ]);
+}
+function fillCards(id, rows) {
+  const box = document.getElementById(id);
+  box.innerHTML = "";
+  rows.forEach(([label, value]) => box.appendChild(el("div", {class:"metric-card"}, [
+    el("div", {class:"metric-label"}, [label]),
+    el("div", {class:"metric-value"}, [String(value)]),
+  ])));
+}
+function seconds(s) {
+  s = Number(s || 0);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return h ? `${h}h ${m}m` : `${m}m ${sec}s`;
+}
+
+document.getElementById("startCollector").onclick = async () => {
+  await postJSON("/api/collector/start", { duration_s: 3600, venues: [] });
+  refreshAll();
+};
+document.getElementById("stopCollector").onclick = async () => {
+  await postJSON("/api/collector/stop", {});
+  refreshAll();
+};
+
+(async () => {
+  try {
+    await refreshAll();
+    setInterval(refreshAll, 5000);
+  } catch (err) {
+    showError("main", err);
+  }
 })();
 </script>
 </body>

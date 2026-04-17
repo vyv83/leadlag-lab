@@ -2,15 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>leadlag — data quality</title>
+<title>leadlag - data quality</title>
 <link rel="stylesheet" href="style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>Data quality</h1>
+<header><h1>Data Quality</h1>
 <nav>
   <a href="dashboard.html">Dashboard</a>
-  <a href="explorer.html">Explorer</a>
   <a href="collector.html">Collector</a>
+  <a href="explorer.html">Explorer</a>
   <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
   <a href="backtest.html">Backtests</a>
@@ -18,44 +19,165 @@
 </header>
 <main>
 <section>
-  <div class="filters">
+  <div class="toolbar">
     <label>Session <select id="session"></select></label>
+    <button id="onlyBad">Show only bad/warning</button>
+    <button id="showAll">Show all</button>
+    <a id="explorerLink" class="button-link" href="#">Open Session in Explorer</a>
+    <button id="exportReport">Export report</button>
   </div>
-  <div class="kv" id="summary"></div>
-  <h2>Per-venue</h2>
-  <table id="venues"><thead><tr>
-    <th>venue</th><th>ticks</th><th>bbo</th><th>σ (ret)</th>
-  </tr></thead><tbody></tbody></table>
+  <div id="cards" class="cards"></div>
+</section>
+
+<section>
+  <h2>Venue Summary</h2>
+  <div class="table-scroll">
+    <table id="venues"><thead><tr>
+      <th>venue</th><th>role</th><th>flag</th><th>reasons</th><th>ticks</th><th>ticks/s avg</th>
+      <th>ticks/s max</th><th>bin coverage</th><th>BBO</th><th>BBO/s</th><th>BBO coverage</th>
+      <th>BBO available</th><th>median price</th><th>leader dev</th><th>reconnects</th><th>downtime</th>
+      <th>uptime</th><th>zero price</th><th>zero qty</th><th>buy/sell</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+</section>
+
+<section>
+  <h2>Quality Charts</h2>
+  <div class="chart-grid">
+    <div class="chart small" id="coverageChart"></div>
+    <div class="chart small" id="ticksChart"></div>
+    <div class="chart small" id="bboSpreadChart"></div>
+    <div class="chart small" id="priceDevChart"></div>
+  </div>
+</section>
+
+<section class="breakdown-grid">
+  <div>
+    <h2>Timeline Gaps</h2>
+    <table id="gaps"><thead><tr><th>venue</th><th>start UTC</th><th>end UTC</th><th>duration s</th></tr></thead><tbody></tbody></table>
+  </div>
+  <div>
+    <h2>BBO Analysis</h2>
+    <table id="bbo"><thead><tr><th>venue</th><th>available</th><th>median</th><th>mean</th><th>max</th><th>p95</th><th>p99</th><th>>5 bps</th></tr></thead><tbody></tbody></table>
+  </div>
 </section>
 </main>
 <script src="app.js"></script>
 <script>
-async function load(id) {
-  const q = await fetchJSON(`/api/sessions/${id}/quality`);
-  const Q = q.quality || {}, M = q.meta || {};
-  const sum = document.getElementById("summary"); sum.innerHTML = "";
-  const add = (k, v) => { sum.appendChild(el("div",{class:"k"},[k])); sum.appendChild(el("div",{},[String(v ?? "—")])); };
-  add("duration_s", Q.duration_s);
-  add("coverage_pct", Q.coverage_pct);
-  add("t_range", `${Q.t_start_ms ?? "—"} → ${Q.t_end_ms ?? "—"}`);
-  add("n_events", M.n_events);
-  add("venues", (M.venues || []).length);
-  const tpv = Q.ticks_per_venue || {};
-  const bpv = Q.bbo_per_venue || {};
-  const sig = Q.sigma_per_venue || {};
-  const rows = (M.venues || Object.keys(tpv)).map(v => ({
-    venue: v, ticks: tpv[v] ?? 0, bbo: bpv[v] ?? 0, sigma: sig[v] ?? null,
-  }));
-  fillTable("#venues", rows, r => [r.venue, r.ticks, r.bbo, fmt(r.sigma, 5)]);
+let sessions = [];
+let payload = {};
+let rows = [];
+let badOnly = false;
+
+const base = { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"}, margin:{t:26,l:55,r:25,b:70} };
+const cfg = { responsive:true, displayModeBar:true };
+
+async function init() {
+  sessions = await fetchJSON("/api/sessions");
+  const sel = document.getElementById("session");
+  if (!sessions.length) {
+    document.getElementById("cards").innerHTML = `<div class="banner">No analyzed sessions yet.</div>`;
+    return;
+  }
+  sel.innerHTML = sessions.map(s => `<option value="${s.id}">${s.id}</option>`).join("");
+  const pre = qs("session");
+  if (pre) sel.value = pre;
+  sel.onchange = () => load(sel.value);
+  await load(sel.value);
 }
 
+async function load(id) {
+  payload = await fetchJSON(`/api/sessions/${id}/quality`);
+  const q = payload.quality || {};
+  const meta = payload.meta || {};
+  document.getElementById("explorerLink").href = `explorer.html?session=${id}`;
+  rows = Object.entries(q.venues || {}).map(([venue, value]) => ({ venue, ...value }));
+  renderCards(q, meta);
+  renderVenueTable();
+  renderCharts();
+  renderGaps(q.timeline_gaps || []);
+  renderBbo();
+}
+
+function renderCards(q, meta) {
+  const good = rows.filter(r => r.flag === "good").length;
+  const warn = rows.filter(r => r.flag === "warning").length;
+  const bad = rows.filter(r => r.flag === "bad").length;
+  const cards = [
+    ["Session", meta.session_id || document.getElementById("session").value],
+    ["Time range", `${utc(q.t_start_ms)} → ${utc(q.t_end_ms)}`],
+    ["Duration", `${fmt(q.duration_s, 0)}s`],
+    ["Venues", rows.length],
+    ["Ticks", rows.reduce((a, r) => a + Number(r.ticks_total || 0), 0)],
+    ["BBO", rows.reduce((a, r) => a + Number(r.bbo_total || 0), 0)],
+    ["Events A/B/C", `${meta.n_signal_a || 0}/${meta.n_signal_b || 0}/${meta.n_signal_c || 0}`],
+    ["Flags", `good ${good}, warning ${warn}, bad ${bad}`],
+  ];
+  const box = document.getElementById("cards");
+  box.innerHTML = "";
+  cards.forEach(([label, value]) => box.appendChild(el("div", {class:"metric-card"}, [
+    el("div", {class:"metric-label"}, [label]),
+    el("div", {class:"metric-value"}, [String(value)]),
+  ])));
+}
+
+function renderVenueTable() {
+  const visible = badOnly ? rows.filter(r => r.flag !== "good") : rows;
+  fillTable("#venues", visible, r => [
+    r.venue, r.role, r.flag, (r.flag_reasons || []).join(", "), r.ticks_total,
+    fmt(r.ticks_per_s_avg), fmt(r.ticks_per_s_max), `${fmt(r.bin_coverage_pct)}%`,
+    r.bbo_total, fmt(r.bbo_per_s_avg), `${fmt(r.bbo_coverage_pct)}%`, r.bbo_available ? "yes" : "N/A",
+    fmt(r.median_price, 2), fmt(r.price_deviation_from_leader_bps), r.reconnects,
+    fmt(r.downtime_s), `${fmt(r.uptime_pct)}%`, r.zero_price_ticks, r.zero_qty_ticks,
+    `${pct(r.side_buy_pct)} / ${pct(r.side_sell_pct)}`,
+  ]);
+  document.querySelectorAll("#venues tbody tr").forEach((tr, i) => {
+    const r = visible[i];
+    tr.classList.toggle("loss-row", r.flag === "bad");
+    tr.classList.toggle("profit-row", r.flag === "good");
+  });
+}
+
+function renderCharts() {
+  const venues = rows.map(r => r.venue);
+  bar("coverageChart", venues, rows.map(r => r.bin_coverage_pct), "Bin coverage", "%");
+  bar("ticksChart", venues, rows.map(r => r.ticks_per_s_avg), "Ticks/s avg", "ticks/s");
+  bar("bboSpreadChart", venues, rows.map(r => r.bbo_p95_spread_bps), "BBO spread p95", "bps");
+  bar("priceDevChart", venues, rows.map(r => r.price_deviation_from_leader_bps), "Price deviation from leader", "bps");
+}
+
+function bar(id, x, y, title, yTitle) {
+  Plotly.react(id, [{ x, y, type:"bar", marker:{color:y.map(v => Number(v || 0) < 0 ? "#f85149" : "#58a6ff") } }], {
+    ...base,
+    title:{text:title},
+    xaxis:{tickangle:-35},
+    yaxis:{title:yTitle},
+  }, cfg);
+}
+
+function renderGaps(gaps) {
+  fillTable("#gaps", gaps, g => [g.venue, utc(g.start_ms), utc(g.end_ms), fmt(g.duration_s)]);
+}
+function renderBbo() {
+  fillTable("#bbo", rows, r => [
+    r.venue, r.bbo_available ? "yes" : "N/A", fmt(r.bbo_median_spread_bps), fmt(r.bbo_mean_spread_bps),
+    fmt(r.bbo_max_spread_bps), fmt(r.bbo_p95_spread_bps), fmt(r.bbo_p99_spread_bps), fmt(r.bbo_pct_above_5bps),
+  ]);
+}
+
+document.getElementById("onlyBad").onclick = () => { badOnly = true; renderVenueTable(); };
+document.getElementById("showAll").onclick = () => { badOnly = false; renderVenueTable(); };
+document.getElementById("exportReport").onclick = () => {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${document.getElementById("session").value}_quality.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
 (async () => {
-  const sessions = await fetchJSON("/api/sessions");
-  const sel = document.getElementById("session");
-  sel.innerHTML = sessions.map(s => `<option>${s.id}</option>`).join("");
-  const pre = qs("session"); if (pre) sel.value = pre;
-  sel.onchange = () => load(sel.value);
-  if (sel.value) await load(sel.value);
+  try { await init(); } catch (err) { showError("main", err); }
 })();
 </script>
 </body>

@@ -9,6 +9,7 @@ import asyncio
 import json
 import random
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import websockets
@@ -16,6 +17,32 @@ import websockets
 from leadlag.collector.schemas import TICK_SCHEMA, BBO_SCHEMA
 from leadlag.collector.writer import writer_task
 from leadlag.venues.config import REGISTRY, VenueConfig
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _atomic_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(path)
+
+
+def _append_log(data_dir: Path, venue: str, event_type: str, message: str) -> None:
+    rec = {
+        "ts_ms": int(time.time() * 1000),
+        "time_utc": _utc_now(),
+        "venue": venue,
+        "event_type": event_type,
+        "message": message,
+    }
+    try:
+        with (data_dir / ".collector_log.jsonl").open("a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
 
 
 async def _keepalive(ws, cfg: VenueConfig) -> None:
@@ -36,9 +63,14 @@ async def _ws_venue_task(
     bbo_q: asyncio.Queue,
     stop_event: asyncio.Event,
     stats: dict,
+    data_dir: Path,
 ) -> None:
     BACKOFF_BASE, BACKOFF_CAP, STABLE_THRESHOLD = 1.0, 60.0, 60.0
-    stats.setdefault(cfg.name, {"ticks": 0, "bbo": 0, "reconnects": 0, "status": "connecting"})
+    stats.setdefault(cfg.name, {
+        "ticks": 0, "bbo": 0, "reconnects": 0, "status": "connecting",
+        "last_tick_ts": None, "last_bbo_ts": None, "last_price": None,
+        "last_reconnect_utc": None, "last_error": None,
+    })
     attempt = 0
 
     while not stop_event.is_set():
@@ -53,11 +85,14 @@ async def _ws_venue_task(
                 ws_kwargs["ping_timeout"] = None
 
             stats[cfg.name]["status"] = "connecting"
+            _append_log(data_dir, cfg.name, "connecting", cfg.ws_url)
             async with websockets.connect(cfg.ws_url, **ws_kwargs) as ws:
                 connect_time = time.time()
                 stats[cfg.name]["status"] = "ok"
                 if attempt > 0:
                     stats[cfg.name]["reconnects"] += 1
+                    stats[cfg.name]["last_reconnect_utc"] = _utc_now()
+                _append_log(data_dir, cfg.name, "connected", "websocket connected")
 
                 if cfg.subscribe_msg == "DYNAMIC" and cfg.subscribe_factory:
                     res = cfg.subscribe_factory()
@@ -96,9 +131,12 @@ async def _ws_venue_task(
                             for t in ticks:
                                 t["venue"] = cfg.name
                                 await trades_q.put(t)
+                                stats[cfg.name]["last_tick_ts"] = int(t.get("ts_ms", ts_local))
+                                stats[cfg.name]["last_price"] = t.get("price")
                             stats[cfg.name]["ticks"] += len(ticks)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            stats[cfg.name]["last_error"] = f"{type(exc).__name__}: {exc}"
+                            _append_log(data_dir, cfg.name, "parser_error", stats[cfg.name]["last_error"])
                         if cfg.bbo_parser:
                             try:
                                 bbo = cfg.bbo_parser(msg, ts_local)
@@ -106,8 +144,10 @@ async def _ws_venue_task(
                                     bbo["venue"] = cfg.name
                                     await bbo_q.put(bbo)
                                     stats[cfg.name]["bbo"] += 1
-                            except Exception:
-                                pass
+                                    stats[cfg.name]["last_bbo_ts"] = int(bbo.get("ts_ms", ts_local))
+                            except Exception as exc:
+                                stats[cfg.name]["last_error"] = f"{type(exc).__name__}: {exc}"
+                                _append_log(data_dir, cfg.name, "bbo_parser_error", stats[cfg.name]["last_error"])
                 finally:
                     if ka:
                         ka.cancel()
@@ -118,6 +158,7 @@ async def _ws_venue_task(
         except Exception as e:
             stats[cfg.name]["status"] = "reconnecting"
             stats[cfg.name]["last_error"] = f"{type(e).__name__}: {e}"
+            _append_log(data_dir, cfg.name, "reconnecting", stats[cfg.name]["last_error"])
             if stop_event.is_set():
                 return
             delay = min(BACKOFF_BASE * (2 ** attempt), BACKOFF_CAP)
@@ -136,27 +177,87 @@ async def run_collector(
     data_dir: Path | str = "data",
 ) -> dict:
     stats: dict = {}
+    data_dir = Path(data_dir)
     active = {n: c for n, c in REGISTRY.items()
               if c.enabled and (venues_filter is None or n in venues_filter)}
+    session_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    start_ts_ms = int(time.time() * 1000)
 
     trades_q: asyncio.Queue = asyncio.Queue(maxsize=1_000_000)
     bbo_q: asyncio.Queue = asyncio.Queue(maxsize=1_000_000)
     stop_event = asyncio.Event()
 
     ws_tasks = [
-        asyncio.create_task(_ws_venue_task(cfg, trades_q, bbo_q, stop_event, stats))
+        asyncio.create_task(_ws_venue_task(cfg, trades_q, bbo_q, stop_event, stats, data_dir))
         for cfg in active.values()
     ]
     t_writer = asyncio.create_task(writer_task(trades_q, stop_event, "ticks", TICK_SCHEMA, data_dir))
     b_writer = asyncio.create_task(writer_task(bbo_q, stop_event, "bbo", BBO_SCHEMA, data_dir))
 
     try:
-        await asyncio.sleep(collect_seconds)
+        deadline = time.time() + collect_seconds
+        _append_log(data_dir, "collector", "started", f"session_id={session_id}, venues={','.join(active)}")
+        while time.time() < deadline:
+            _write_status(data_dir, session_id, start_ts_ms, collect_seconds, active, stats, running=True)
+            await asyncio.sleep(2)
     finally:
         stop_event.set()
+        _write_status(data_dir, session_id, start_ts_ms, collect_seconds, active, stats, running=False)
+        _append_log(data_dir, "collector", "stopping", f"session_id={session_id}")
         await asyncio.sleep(1)
         for t in ws_tasks:
             t.cancel()
         await asyncio.gather(t_writer, b_writer, return_exceptions=True)
 
     return stats
+
+
+def _write_status(
+    data_dir: Path,
+    session_id: str,
+    start_ts_ms: int,
+    planned_duration_s: int,
+    active: dict[str, VenueConfig],
+    stats: dict,
+    *,
+    running: bool,
+) -> None:
+    now_ms = int(time.time() * 1000)
+    venues = []
+    for name, cfg in active.items():
+        row = stats.get(name, {})
+        ticks = int(row.get("ticks", 0))
+        bbo = int(row.get("bbo", 0))
+        elapsed = max(1.0, (now_ms - start_ts_ms) / 1000.0)
+        last_tick = row.get("last_tick_ts")
+        venues.append({
+            "name": name,
+            "role": cfg.role,
+            "status": row.get("status", "disabled"),
+            "ticks": ticks,
+            "ticks_per_s_1m": ticks / elapsed,
+            "ticks_per_s_10m": ticks / elapsed,
+            "bbo": bbo,
+            "bbo_per_s": bbo / elapsed,
+            "reconnects": int(row.get("reconnects", 0)),
+            "last_reconnect_utc": row.get("last_reconnect_utc"),
+            "last_tick_ts": last_tick,
+            "seconds_since_last_tick": ((now_ms - int(last_tick)) / 1000.0) if last_tick else None,
+            "last_price": row.get("last_price"),
+            "median_price": row.get("last_price"),
+            "last_error": row.get("last_error"),
+            "uptime_pct": 100.0 if row.get("status") == "ok" else 0.0,
+            "bbo_available": cfg.bbo_available,
+            "taker_fee_bps": cfg.taker_fee_bps,
+            "maker_fee_bps": cfg.maker_fee_bps,
+        })
+    _atomic_json(data_dir / ".collector_status.json", {
+        "running": running,
+        "session_id": session_id,
+        "start_time": start_ts_ms,
+        "start_time_utc": datetime.fromtimestamp(start_ts_ms / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+        "planned_duration_s": planned_duration_s,
+        "updated_at_ms": now_ms,
+        "updated_at_utc": _utc_now(),
+        "venues": venues,
+    })

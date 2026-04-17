@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>leadlag — collector</title>
+<title>leadlag - collector</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header><h1>Collector</h1>
 <nav>
   <a href="dashboard.html">Dashboard</a>
-  <a href="explorer.html">Explorer</a>
   <a href="collector.html">Collector</a>
+  <a href="explorer.html">Explorer</a>
   <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
   <a href="backtest.html">Backtests</a>
@@ -19,51 +19,193 @@
 <main>
 <section>
   <h2>Control</h2>
-  <div class="filters">
-    <label>Duration (s) <input id="duration" type="number" value="600"></label>
-    <label>Venues (comma, blank=all) <input id="venues" style="width:360px" placeholder="Lighter Perp,OKX Perp"></label>
+  <div class="toolbar">
+    <label>Duration hours <input id="durationHours" type="number" min="0.1" step="0.1" value="1"></label>
+    <label>Bin size ms <input id="binSize" type="number" min="10" step="10" value="50"></label>
+    <label>Rotation minutes <input id="rotation" type="number" min="1" step="1" value="30"></label>
+    <button id="selectLeaders">Select All Leaders</button>
+    <button id="selectFollowers">Select All Followers</button>
+    <button id="selectAll">Select All</button>
+    <button id="clearSelection">Clear Selection</button>
+    <button id="toggleUrls">Show/Hide WS URLs</button>
     <button id="start">Start</button>
     <button id="stop">Stop</button>
+    <button id="restart">Restart</button>
+    <button id="refresh">Refresh Status</button>
   </div>
   <div class="kv" id="status"></div>
 </section>
+
 <section>
-  <h2>Parquet files under data/</h2>
-  <table id="files"><thead><tr><th>path</th><th>size MB</th><th>modified</th></tr></thead><tbody></tbody></table>
+  <h2>Venue Selection</h2>
+  <div class="table-scroll">
+    <table id="venueConfig"><thead><tr>
+      <th>use</th><th>venue</th><th>role</th><th>taker</th><th>maker</th><th>BBO</th>
+      <th>keepalive</th><th>enabled</th><th class="wscol">WS URL</th>
+    </tr></thead><tbody></tbody></table>
+  </div>
+</section>
+
+<section>
+  <h2>Live Monitor</h2>
+  <table id="live"><thead><tr>
+    <th>venue</th><th>role</th><th>status</th><th>ticks</th><th>ticks/s 1m</th><th>ticks/s 10m</th>
+    <th>BBO</th><th>BBO/s</th><th>reconnects</th><th>last reconnect</th><th>last tick</th>
+    <th>seconds idle</th><th>last price</th><th>median price</th><th>last error</th><th>uptime %</th>
+  </tr></thead><tbody></tbody></table>
+</section>
+
+<section class="breakdown-grid">
+  <div>
+    <h2>Collector Log</h2>
+    <div class="toolbar">
+      <label>Venue <select id="logVenue"><option value="">All</option></select></label>
+      <label>Type <select id="logType"><option value="">All</option></select></label>
+      <label><input id="autoScroll" type="checkbox" checked> Auto-scroll</label>
+    </div>
+    <div class="log-box" id="logBox"></div>
+  </div>
+  <div>
+    <h2>Files</h2>
+    <table id="files"><thead><tr><th>path</th><th>size</th><th>rows</th><th>time range UTC</th><th>venues</th></tr></thead><tbody></tbody></table>
+  </div>
 </section>
 </main>
 <script src="app.js"></script>
 <script>
-async function refresh() {
-  const st = await fetchJSON("/api/collector/status");
-  const kv = document.getElementById("status"); kv.innerHTML = "";
-  const add = (k, v) => { kv.appendChild(el("div",{class:"k"},[k])); kv.appendChild(el("div",{},[String(v)])); };
-  add("running", st.running ?? false);
-  add("proc_alive", st.proc_alive ?? false);
-  if (st.session_id) add("session_id", st.session_id);
-  if (st.venues) add("venues", (st.venues || []).map(v => `${v.name}:${v.status}(${v.ticks})`).join(", "));
-  const files = await fetchJSON("/api/system/files");
-  fillTable("#files", files, f => [f.path, f.size_mb, new Date(f.modified).toISOString()]);
+let venues = [];
+let statusPayload = {};
+let showUrls = false;
+
+async function loadVenues() {
+  venues = await fetchJSON("/api/venues");
+  const tbody = document.querySelector("#venueConfig tbody");
+  tbody.innerHTML = "";
+  venues.forEach(v => {
+    const tr = el("tr");
+    tr.innerHTML = `
+      <td><input class="venueCheck" type="checkbox" value="${v.name}" ${v.enabled ? "checked" : ""}></td>
+      <td>${v.name}</td><td>${v.role}</td><td>${fmt(v.taker_fee_bps)}</td><td>${fmt(v.maker_fee_bps)}</td>
+      <td>${v.bbo_available ? "yes" : "N/A"}</td><td>${v.keepalive_type || "exchange"}</td><td>${v.enabled ? "yes" : "no"}</td>
+      <td class="wscol">${v.ws_url}</td>`;
+    tbody.appendChild(tr);
+  });
+  fillLogFilters();
+  setUrlVisibility();
 }
 
-document.getElementById("start").onclick = async () => {
-  const body = {
-    duration_s: Number(document.getElementById("duration").value),
-    venues: document.getElementById("venues").value.split(",").map(s => s.trim()).filter(Boolean),
-  };
-  const r = await apiFetch("/api/collector/start", {
-    method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body),
+async function refresh() {
+  const [st, log, files] = await Promise.all([
+    fetchJSON("/api/collector/status"),
+    fetchJSON(logUrl()),
+    fetchJSON("/api/collector/files"),
+  ]);
+  statusPayload = st;
+  renderStatus(st);
+  renderLive(st);
+  renderLog(log);
+  renderFiles(files.slice(-12).reverse());
+}
+
+function renderStatus(st) {
+  const kv = document.getElementById("status");
+  kv.innerHTML = "";
+  const rows = [
+    ["running", st.running ? "yes" : "no"],
+    ["proc alive", st.proc_alive ? "yes" : "no"],
+    ["session id", st.session_id || "—"],
+    ["started UTC", utc(st.start_time)],
+    ["planned", `${fmt(st.planned_duration_s, 0)}s`],
+    ["updated UTC", utc(st.updated_at_ms)],
+  ];
+  rows.forEach(([k, v]) => { kv.appendChild(el("div", {class:"k"}, [k])); kv.appendChild(el("div", {}, [String(v)])); });
+  document.getElementById("start").disabled = !!st.running;
+  document.getElementById("stop").disabled = !st.running;
+}
+function renderLive(st) {
+  fillTable("#live", st.venues || [], r => [
+    r.name, r.role, r.status, r.ticks, fmt(r.ticks_per_s_1m), fmt(r.ticks_per_s_10m),
+    r.bbo, fmt(r.bbo_per_s), r.reconnects, r.last_reconnect_utc || "—", utc(r.last_tick_ts),
+    fmt(r.seconds_since_last_tick), fmt(r.last_price, 2), fmt(r.median_price, 2), r.last_error || "", fmt(r.uptime_pct),
+  ]);
+}
+function renderLog(rows) {
+  const box = document.getElementById("logBox");
+  box.innerHTML = rows.map(r => `<div><span class="muted">${utc(r.ts_ms)}</span> <b>${r.venue}</b> ${r.event_type}: ${escapeHtml(r.message || "")}</div>`).join("");
+  if (document.getElementById("autoScroll").checked) box.scrollTop = box.scrollHeight;
+  const types = [...new Set(rows.map(r => r.event_type).filter(Boolean))].sort();
+  const sel = document.getElementById("logType");
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">All</option>` + types.map(t => `<option value="${t}">${t}</option>`).join("");
+  if (types.includes(cur)) sel.value = cur;
+}
+function renderFiles(rows) {
+  fillTable("#files", rows, f => [
+    f.path, fmt(f.size_mb), f.rows ?? "—",
+    f.ts_min ? `${utc(f.ts_min)} → ${utc(f.ts_max)}` : "—",
+    (f.venues || []).join(", "),
+  ]);
+}
+function selectedVenues() {
+  return [...document.querySelectorAll(".venueCheck:checked")].map(i => i.value);
+}
+function logUrl() {
+  const p = new URLSearchParams();
+  const v = document.getElementById("logVenue").value;
+  const t = document.getElementById("logType").value;
+  if (v) p.set("venue", v);
+  if (t) p.set("type", t);
+  return `/api/collector/log?${p}`;
+}
+function fillLogFilters() {
+  document.getElementById("logVenue").innerHTML = `<option value="">All</option>` + venues.map(v => `<option value="${v.name}">${v.name}</option>`).join("");
+}
+function setChecks(filterFn) {
+  document.querySelectorAll(".venueCheck").forEach(input => {
+    const venue = venues.find(v => v.name === input.value);
+    input.checked = !!venue && filterFn(venue);
   });
-  if (!r.ok) alert("start failed: " + await r.text());
+}
+function setUrlVisibility() {
+  document.querySelectorAll(".wscol").forEach(cell => cell.style.display = showUrls ? "" : "none");
+}
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.getElementById("selectLeaders").onclick = () => setChecks(v => v.role === "leader");
+document.getElementById("selectFollowers").onclick = () => setChecks(v => v.role === "follower");
+document.getElementById("selectAll").onclick = () => setChecks(() => true);
+document.getElementById("clearSelection").onclick = () => setChecks(() => false);
+document.getElementById("toggleUrls").onclick = () => { showUrls = !showUrls; setUrlVisibility(); };
+document.getElementById("refresh").onclick = refresh;
+document.getElementById("logVenue").onchange = refresh;
+document.getElementById("logType").onchange = refresh;
+document.getElementById("start").onclick = async () => {
+  await postJSON("/api/collector/start", {
+    duration_s: Math.round(Number(document.getElementById("durationHours").value || 1) * 3600),
+    venues: selectedVenues(),
+    bin_size_ms: Number(document.getElementById("binSize").value || 50),
+    rotation_s: Number(document.getElementById("rotation").value || 30) * 60,
+  });
   refresh();
 };
-document.getElementById("stop").onclick = async () => {
-  await apiFetch("/api/collector/stop", { method:"POST" });
+document.getElementById("stop").onclick = async () => { await postJSON("/api/collector/stop", {}); refresh(); };
+document.getElementById("restart").onclick = async () => {
+  await postJSON("/api/collector/stop", {});
+  await postJSON("/api/collector/start", { duration_s: Math.round(Number(document.getElementById("durationHours").value || 1) * 3600), venues: selectedVenues() });
   refresh();
 };
 
-refresh();
-setInterval(refresh, 5000);
+(async () => {
+  try {
+    await loadVenues();
+    await refresh();
+    setInterval(refresh, 5000);
+  } catch (err) {
+    showError("main", err);
+  }
+})();
 </script>
 </body>
 </html>
