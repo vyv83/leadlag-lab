@@ -17,6 +17,7 @@ dependencies = [
     "uvicorn",
     "psutil",
     "tqdm",
+    "plotly",
 ]
 
 [tool.setuptools.packages.find]

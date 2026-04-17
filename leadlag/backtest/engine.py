@@ -74,14 +74,57 @@ class BacktestResult:
         return out
 
     def plot_equity(self, layers: bool = False):
-        """Minimal renderer — returns a DataFrame suitable for notebook display."""
+        """Return a Plotly figure for notebook display."""
+        import plotly.graph_objects as go
+
         df = pd.DataFrame(self.equity)
         if df.empty:
-            return df
-        cols = ["ts_ms", "net_equity_bps"]
+            return _style_fig(go.Figure(), "Equity", "UTC", "bps")
+        xs = pd.to_datetime(df["ts_ms"], unit="ms", utc=True)
+        fig = go.Figure()
         if layers:
-            cols = ["ts_ms", "gross_equity_bps", "post_fee_equity_bps", "net_equity_bps", "drawdown_bps"]
-        return df[cols]
+            fig.add_trace(go.Scatter(x=xs, y=df["gross_equity_bps"], mode="lines", name="Gross"))
+            fig.add_trace(go.Scatter(x=xs, y=df["post_fee_equity_bps"], mode="lines", name="Gross - Fees"))
+        fig.add_trace(go.Scatter(x=xs, y=df["net_equity_bps"], mode="lines+markers", name="Net"))
+        fig.add_trace(go.Scatter(x=xs, y=df["drawdown_bps"], mode="lines", fill="tozeroy", name="Drawdown", yaxis="y2"))
+        fig.update_layout(yaxis=dict(domain=[0.30, 1.0]), yaxis2=dict(domain=[0.0, 0.20], title="drawdown bps"))
+        return _style_fig(fig, "Backtest equity", "UTC", "cumulative bps")
+
+    def plot_trades_scatter(self):
+        import plotly.graph_objects as go
+
+        df = pd.DataFrame(self.trades)
+        fig = go.Figure()
+        if not df.empty:
+            fig.add_trace(go.Scatter(
+                x=df["magnitude_sigma"], y=df["net_pnl_bps"], mode="markers",
+                marker=dict(color=df["net_pnl_bps"], colorscale="RdYlGn", showscale=True),
+                text=df["venue"],
+            ))
+        return _style_fig(fig, "Magnitude vs PnL", "sigma", "net bps")
+
+    def plot_spread_impact(self):
+        import plotly.graph_objects as go
+
+        df = pd.DataFrame(self.trades)
+        fig = go.Figure()
+        if not df.empty and "spread_at_entry_bps" in df:
+            fig.add_trace(go.Scatter(x=df["spread_at_entry_bps"], y=df["net_pnl_bps"], mode="markers", text=df["venue"]))
+        return _style_fig(fig, "Spread at entry vs PnL", "spread bps", "net bps")
+
+    def plot_trade(self, n: int):
+        import plotly.graph_objects as go
+
+        trade = self.trades[int(n)]
+        labels = ["gross", "fees", "slippage", "net"]
+        values = [
+            trade.get("gross_pnl_bps", 0.0),
+            -abs(trade.get("fee_total_bps", 0.0)),
+            -abs(trade.get("slippage_total_bps", 0.0)),
+            trade.get("net_pnl_bps", 0.0),
+        ]
+        fig = go.Figure(go.Bar(x=labels, y=values))
+        return _style_fig(fig, f"Trade {trade.get('trade_id')} execution breakdown", "component", "bps")
 
 
 def run_backtest(
@@ -651,3 +694,16 @@ def _max_dd_duration_ms(equity: list[dict]) -> int:
     if start is not None and equity:
         best = max(best, int(equity[-1]["ts_ms"]) - start)
     return int(best)
+
+
+def _style_fig(fig, title: str, x_title: str, y_title: str):
+    fig.update_layout(
+        title=title,
+        template="plotly_dark",
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#0e1117",
+        hovermode="x unified",
+        xaxis_title=x_title,
+        yaxis_title=y_title,
+    )
+    return fig

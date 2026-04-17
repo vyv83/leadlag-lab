@@ -46,3 +46,35 @@ def load_strategy(path: str | Path) -> Strategy:
         )
 
     return cls()
+
+
+def save_strategy_source(source: str, path: str | Path) -> Path:
+    """Save a strategy .py file from a notebook cell and validate it immediately."""
+    path = Path(path)
+    compile(source, str(path), "exec")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source)
+    load_strategy(path)
+    return path
+
+
+def list_strategies(directory: str | Path = "data/strategies") -> list[dict]:
+    root = Path(directory)
+    if not root.is_dir():
+        return []
+    rows = []
+    for path in sorted(root.glob("*.py")):
+        row = {"path": str(path), "name": path.stem, "valid": True, "error": None}
+        try:
+            strategy = load_strategy(path)
+            row.update({
+                "name": getattr(strategy, "name", path.stem),
+                "version": getattr(strategy, "version", ""),
+                "description": getattr(strategy, "description", ""),
+                "params": getattr(strategy, "params", {}),
+            })
+        except Exception as exc:
+            row["valid"] = False
+            row["error"] = f"{type(exc).__name__}: {exc}"
+        rows.append(row)
+    return rows

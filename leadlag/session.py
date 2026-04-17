@@ -41,11 +41,23 @@ def make_session_id(collection_id: str, params: dict) -> str:
     return f"{collection_id}_{_params_hash(params)}"
 
 
+class EventView(dict):
+    def __init__(self, row: dict, session: "Session | None" = None):
+        super().__init__(row)
+        self._session = session
+
+    def plot(self, follower: str | None = None):
+        if self._session is None:
+            raise ValueError("EventView is not attached to a Session")
+        return self._session.plot_event(int(self["bin_idx"]), follower=follower)
+
+
 class EventsTable:
     """Notebook-friendly wrapper around event rows."""
 
-    def __init__(self, rows: Iterable[dict] | None = None):
+    def __init__(self, rows: Iterable[dict] | None = None, session: "Session | None" = None):
         self.rows = list(rows or [])
+        self._session = session
 
     @property
     def count(self) -> int:
@@ -58,7 +70,7 @@ class EventsTable:
         return iter(self.rows)
 
     def __getitem__(self, i):
-        return self.rows[i]
+        return EventView(self.rows[i], self._session)
 
     def filter(
         self,
@@ -97,7 +109,7 @@ class EventsTable:
             out = [e for e in out if _utc_time_in_range(int(e.get("ts_ms", 0)), start_hhmm, end_hhmm)]
         for key, value in exact.items():
             out = [e for e in out if e.get(key) == value]
-        return EventsTable(out)
+        return EventsTable(out, session=self._session)
 
     def stats(self, follower: str) -> dict:
         rows = [e for e in self.rows if follower in e.get("follower_metrics", {})]
@@ -118,6 +130,70 @@ class EventsTable:
 
     def to_df(self) -> pd.DataFrame:
         return pd.DataFrame(self.rows)
+
+    def grid_search(
+        self,
+        followers: list[str] | None = None,
+        delays_ms: list[int] | None = None,
+        holds_ms: list[int] | None = None,
+    ) -> pd.DataFrame:
+        if self._session is None or self._session.vwap_df is None:
+            raise ValueError("EventsTable.grid_search requires a Session with vwap_df")
+        from leadlag.analysis.metrics import grid_search
+
+        followers = followers or self._session.meta.get("followers", [])
+        fees = {
+            venue: float((self._session.meta.get("fees", {}).get(venue) or {}).get("taker_bps", 0.0))
+            for venue in followers
+        }
+        return grid_search(
+            self.rows,
+            self._session.vwap_df,
+            followers,
+            fees,
+            delay_grid_ms=delays_ms,
+            hold_grid_ms=holds_ms,
+            bin_size_ms=int(self._session.meta.get("bin_size_ms", 50)),
+        )
+
+    def plot_lag_distribution(self, follower: str):
+        import plotly.graph_objects as go
+
+        vals = [
+            e.get("follower_metrics", {}).get(follower, {}).get("lag_50_ms")
+            for e in self.rows
+        ]
+        vals = [v for v in vals if v is not None]
+        fig = go.Figure(go.Histogram(x=vals, name="lag_50_ms"))
+        return _style_fig(fig, "Lag 50 distribution", "lag ms", "count")
+
+    def plot_magnitude_distribution(self):
+        import plotly.graph_objects as go
+
+        vals = [e.get("magnitude_sigma") for e in self.rows if e.get("magnitude_sigma") is not None]
+        fig = go.Figure(go.Histogram(x=vals, name="magnitude_sigma"))
+        return _style_fig(fig, "Magnitude distribution", "sigma", "count")
+
+    def plot_heatmap(self, *, x: str, y: str, metric: str, follower: str, signal: str | None = None):
+        import plotly.graph_objects as go
+
+        rows = self.filter(signal=signal).grid_search(followers=[follower]) if signal else self.grid_search(followers=[follower])
+        if rows.empty:
+            return _style_fig(go.Figure(), "No grid rows", x, y)
+        pivot = rows.pivot_table(index=y, columns=x, values=metric, aggfunc="mean")
+        fig = go.Figure(go.Heatmap(x=list(pivot.columns), y=list(pivot.index), z=pivot.values, colorscale="RdYlGn"))
+        return _style_fig(fig, f"{metric} heatmap for {follower}", x, y)
+
+    def plot_equity(self, follower: str, hold_ms: int = 30000, delay_ms: int = 0):
+        import plotly.graph_objects as go
+
+        grid = self.grid_search(followers=[follower], delays_ms=[delay_ms], holds_ms=[hold_ms])
+        if grid.empty:
+            return _style_fig(go.Figure(), "No equity rows", "event", "net bps")
+        grid = grid.sort_values("bin_idx")
+        eq = grid["net_pnl_bps"].cumsum()
+        fig = go.Figure(go.Scatter(x=list(range(1, len(eq) + 1)), y=eq, mode="lines+markers", name="net"))
+        return _style_fig(fig, f"{follower} equity hold={hold_ms}ms", "event", "cumulative bps")
 
 
 class Session:
@@ -142,6 +218,7 @@ class Session:
         self.session_id = session_id
         self.meta = meta
         self.events = events if isinstance(events, EventsTable) else EventsTable(events)
+        self.events._session = self
         self.quality = quality or {}
         self.root_dir = root_dir
         self._price_windows = price_windows
@@ -263,6 +340,29 @@ class Session:
             "no_bbo_venues": no_bbo_venues,
             "fees": self.meta.get("fees", {}),
         }
+
+    def plot_event(self, bin_idx: int, follower: str | None = None):
+        import plotly.graph_objects as go
+
+        detail = self.event_detail(bin_idx)
+        event = detail["event"]
+        price_window = detail.get("price_window") or {}
+        rel = price_window.get("rel_times_ms") or []
+        venues = price_window.get("venues") or {}
+        follower = follower or (event.get("lagging_followers") or self.meta.get("followers") or [None])[0]
+        fig = go.Figure()
+        leaders = self.meta.get("leaders", []) if event.get("signal") == "C" else [event.get("anchor_leader") or event.get("leader")]
+        for venue in leaders:
+            if venue in venues:
+                fig.add_trace(go.Scatter(x=rel, y=_bps_from_t0(venues[venue], rel), mode="lines", name=venue))
+        if follower in venues:
+            fig.add_trace(go.Scatter(x=rel, y=_bps_from_t0(venues[follower], rel), mode="lines", name=follower))
+        bbo = (detail.get("bbo_window") or {}).get("venues", {}).get(follower or "")
+        if bbo and follower in venues:
+            fig.add_trace(go.Scatter(x=rel, y=_bps_from_t0(bbo.get("bid", []), rel), mode="lines", name=f"{follower} bid"))
+            fig.add_trace(go.Scatter(x=rel, y=_bps_from_t0(bbo.get("ask", []), rel), mode="lines", fill="tonexty", name=f"{follower} ask"))
+        fig.add_vline(x=0, line_dash="dash", line_color="red")
+        return _style_fig(fig, f"Event {bin_idx} {event.get('signal')}", "ms from event", "bps from t0")
 
     def save(self, data_dir: Path | str = DEFAULT_DATA_DIR) -> Path:
         out = Path(data_dir) / "sessions" / self.session_id
@@ -942,3 +1042,31 @@ def _utc_time_in_range(ts_ms: int, start_hhmm: str, end_hhmm: str) -> bool:
     if end_hhmm and hhmm > end_hhmm:
         return False
     return True
+
+
+def _bps_from_t0(values: list, rel: list[int]) -> list[float | None]:
+    if not values:
+        return []
+    idx = next((i for i, x in enumerate(rel) if int(x) == 0), 0)
+    base = values[idx] if idx < len(values) else None
+    if base in (None, 0):
+        base = next((v for v in values if v not in (None, 0)), None)
+    if not base:
+        return [None for _ in values]
+    out = []
+    for value in values:
+        out.append(None if value is None else (float(value) / float(base) - 1.0) * 1e4)
+    return out
+
+
+def _style_fig(fig, title: str, x_title: str, y_title: str):
+    fig.update_layout(
+        title=title,
+        template="plotly_dark",
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#0e1117",
+        hovermode="x unified",
+        xaxis_title=x_title,
+        yaxis_title=y_title,
+    )
+    return fig

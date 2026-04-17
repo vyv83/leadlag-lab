@@ -1,6 +1,6 @@
 from leadlag.session import Session, load_session, list_sessions
 from leadlag.strategy import Strategy, Order, Event, Context, BboSnapshot
-from leadlag.strategy_loader import load_strategy
+from leadlag.strategy_loader import load_strategy, save_strategy_source, list_strategies
 from leadlag.backtest import run_backtest, BacktestResult
 from leadlag.montecarlo import run_monte_carlo, MonteCarloResult
 
@@ -14,6 +14,8 @@ __all__ = [
     "Context",
     "BboSnapshot",
     "load_strategy",
+    "save_strategy_source",
+    "list_strategies",
     "run_backtest",
     "BacktestResult",
     "run_monte_carlo",
