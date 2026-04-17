@@ -24,12 +24,20 @@ import numpy as np
 import pandas as pd
 
 from leadlag.backtest.slippage import compute_slippage_bps
+from leadlag.contracts import (
+    utc_from_ms,
+    utc_now_iso,
+    validate_backtest_artifacts,
+    validate_backtest_payload,
+    write_json,
+)
 from leadlag.strategy import BboSnapshot, Context, Event, Order, Strategy
 from leadlag.venues.config import BBO_UNAVAILABLE_VENUES, REGISTRY
 
 
 LIMIT_FILL_WINDOW_PCT = 0.30
 SPREAD_BUCKETS_BPS = [0.5, 1.0, 2.0, 5.0]
+ENGINE_VERSION = "backtest.v2"
 
 
 @dataclass
@@ -44,15 +52,25 @@ class BacktestResult:
 
     def save(self, data_dir: Path | str = "data") -> Path:
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        out = Path(data_dir) / "backtest" / f"{self.strategy_name}_{ts}"
+        backtest_id = self.meta.get("backtest_id") or f"{self.strategy_name}_{ts}"
+        out = Path(data_dir) / "backtest" / backtest_id
         out.mkdir(parents=True, exist_ok=True)
-        (out / "meta.json").write_text(json.dumps({**self.meta, "params": self.params,
-                                                    "strategy_name": self.strategy_name,
-                                                    "session_id": self.session_id,
-                                                    "created_at": ts}, indent=2))
-        (out / "trades.json").write_text(json.dumps(self.trades))
-        (out / "equity.json").write_text(json.dumps(self.equity))
-        (out / "stats.json").write_text(json.dumps(self.stats, indent=2))
+        meta = {
+            **self.meta,
+            "backtest_id": backtest_id,
+            "strategy_name": self.strategy_name,
+            "session_id": self.session_id,
+            "params": self.params,
+            "created_at": ts,
+        }
+        validate_backtest_payload(meta, self.trades, self.equity, self.stats)
+        write_json(out / "meta.json", meta, indent=2)
+        write_json(out / "trades.json", self.trades)
+        write_json(out / "equity.json", self.equity)
+        write_json(out / "stats.json", self.stats, indent=2)
+        if self.meta.get("montecarlo"):
+            write_json(out / "montecarlo.json", self.meta["montecarlo"], indent=2)
+        validate_backtest_artifacts(out)
         return out
 
     def plot_equity(self, layers: bool = False):
@@ -72,11 +90,13 @@ def run_backtest(
     params_override: Optional[dict] = None,
     data_dir: Path | str = "data",
 ) -> BacktestResult:
+    t0 = time.perf_counter()
     if session.vwap_df is None:
-        raise ValueError("Session has no vwap_df; use Session.build_from_raw() or attach vwap_df before backtesting.")
+        raise ValueError("Session has no vwap_df artifact; rebuild/save the session with vwap.parquet before backtesting.")
 
     params = {**getattr(strategy, "params", {}), **(params_override or {})}
-    strategy.params = params
+    original_params = dict(getattr(strategy, "params", {}) or {})
+    strategy.params = dict(params)
     bin_size_ms = int(session.params.get("bin_size_ms", 50))
     t_start_ms = int(session.quality.get("t_start_ms") or session.meta.get("t_start_ms") or 0)
 
@@ -92,64 +112,99 @@ def run_backtest(
     open_positions: dict[str, list[dict]] = {}  # venue -> list of {exit_bin_idx, side}
     trades: list[dict] = []
     trade_id = 0
+    n_errors = 0
+    n_skipped_position = 0
+    n_limit_attempts = 0
+    n_limit_filled = 0
 
-    for ev_row in events_sorted:
-        ev = _to_event(ev_row)
-        bbo_ctx = _bbo_context_at(bbo_lookup, ev.ts_ms)
-        ctx = Context(ts_ms=ev.ts_ms, bbo=bbo_ctx, positions=dict(open_positions), params=params)
+    try:
+        for ev_row in events_sorted:
+            ev = _to_event(ev_row)
+            # Purge expired positions before evaluating a fresh signal.
+            for v, lst in list(open_positions.items()):
+                open_positions[v] = [p for p in lst if p["exit_bin_idx"] > ev.bin_idx]
+            bbo_ctx = _bbo_context_at(bbo_lookup, ev.ts_ms)
+            ctx = Context(ts_ms=ev.ts_ms, bbo=bbo_ctx, positions=dict(open_positions), params=params)
 
-        order = strategy.on_event(ev, ctx)
-        if order is None:
-            continue
-        if order.venue not in vwap_df.columns:
-            continue
-
-        # Position management.
-        open_on_venue = open_positions.get(order.venue, [])
-        if open_on_venue:
-            if position_mode == "reject":
+            try:
+                order = strategy.on_event(ev, ctx)
+            except Exception:
+                n_errors += 1
                 continue
-            if position_mode == "reverse":
-                same_dir = any(p["side"] == order.side for p in open_on_venue)
-                if same_dir:
+            if order is None:
+                continue
+            if order.venue not in vwap_df.columns:
+                continue
+
+            open_on_venue = open_positions.get(order.venue, [])
+            if open_on_venue:
+                if position_mode == "reject":
+                    n_skipped_position += 1
                     continue
-                open_positions[order.venue] = []  # close immediately (modeled as skip — spec allows)
-            # 'stack' → just append
+                if position_mode == "reverse":
+                    same_dir = any(p["side"] == order.side for p in open_on_venue)
+                    if same_dir:
+                        n_skipped_position += 1
+                        continue
+                    open_positions[order.venue] = []
+                # 'stack' appends independently.
 
-        trade = _simulate_trade(
-            trade_id=trade_id,
-            event=ev,
-            order=order,
-            vwap_df=vwap_df,
-            bbo_lookup=bbo_lookup,
-            bin_size_ms=bin_size_ms,
-            slippage_model=slippage_model,
-            fixed_slippage_bps=fixed_slippage,
-        )
-        if trade is None:
-            continue
+            if order.entry_type == "limit":
+                n_limit_attempts += 1
 
-        trades.append(trade)
-        open_positions.setdefault(order.venue, []).append({
-            "exit_bin_idx": trade["_exit_bin_idx"],
-            "side": order.side,
-        })
-        # Purge expired.
-        for v, lst in list(open_positions.items()):
-            open_positions[v] = [p for p in lst if p["exit_bin_idx"] > ev.bin_idx]
-        trade_id += 1
+            trade = _simulate_trade(
+                trade_id=trade_id,
+                event=ev,
+                order=order,
+                vwap_df=vwap_df,
+                bbo_lookup=bbo_lookup,
+                bin_size_ms=bin_size_ms,
+                slippage_model=slippage_model,
+                fixed_slippage_bps=fixed_slippage,
+            )
+            if trade is None:
+                continue
+            if order.entry_type == "limit":
+                n_limit_filled += 1
+
+            trades.append(trade)
+            open_positions.setdefault(order.venue, []).append({
+                "exit_bin_idx": trade["_exit_bin_idx"],
+                "side": order.side,
+            })
+            trade_id += 1
+    finally:
+        strategy.params = original_params
 
     for t in trades:
         t.pop("_exit_bin_idx", None)
 
     equity = _build_equity(trades)
-    stats = _build_stats(trades, equity, params)
+    stats = _build_stats(
+        trades,
+        equity,
+        params,
+        n_errors=n_errors,
+        n_skipped_position=n_skipped_position,
+        n_limit_attempts=n_limit_attempts,
+        n_limit_filled=n_limit_filled,
+    )
 
+    entry_type = params.get("entry_type", "market")
     meta = {
+        "backtest_id": f"{getattr(strategy, 'name', strategy.__class__.__name__)}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
+        "strategy_version": getattr(strategy, "version", ""),
         "strategy_description": getattr(strategy, "description", ""),
+        "strategy_params": params,
         "params_override": params_override or {},
+        "backtest_date_utc": utc_now_iso(),
+        "computation_time_s": time.perf_counter() - t0,
         "slippage_model": slippage_model,
+        "fixed_slippage_bps": fixed_slippage,
+        "entry_type": entry_type,
         "position_mode": position_mode,
+        "data_contract_version": "backtest.contract.v1",
+        "engine_version": ENGINE_VERSION,
     }
     return BacktestResult(
         strategy_name=getattr(strategy, "name", strategy.__class__.__name__),
@@ -245,15 +300,10 @@ def _simulate_trade(
     entry_bin = event.bin_idx + delay_bins
     if entry_bin >= len(vwap_df):
         return None
-    entry_ts_ms = int(vwap_df["ts_ms"].iloc[entry_bin]) if "ts_ms" in vwap_df.columns else event.ts_ms + delay_bins * bin_size_ms
 
     cfg = REGISTRY.get(venue)
     taker = float(cfg.taker_fee_bps if cfg else 5.0)
     maker = float(cfg.maker_fee_bps if cfg else 2.0)
-
-    bbo_entry = bbo_lookup.at(venue, entry_ts_ms)
-    bbo_available = (venue not in BBO_UNAVAILABLE_VENUES) and (bbo_entry is not None)
-    spread_entry = bbo_entry["spread_bps"] if bbo_entry else None
 
     is_limit = order.entry_type == "limit"
     if is_limit:
@@ -269,19 +319,27 @@ def _simulate_trade(
         if fill_bin is None:
             return None
         entry_bin = fill_bin
+        entry_ts_ms = _ts_at(vwap_df, entry_bin, event.ts_ms + delay_bins * bin_size_ms)
+        bbo_entry = bbo_lookup.at(venue, entry_ts_ms)
+        bbo_available = (venue not in BBO_UNAVAILABLE_VENUES) and (bbo_entry is not None)
+        spread_entry = bbo_entry["spread_bps"] if bbo_entry else None
         entry_price_vwap = limit_price
         entry_price_exec = limit_price
         slippage_entry_bps, slip_src_entry = 0.0, "none"
         fee_entry = maker
-        fee_type = "maker"
+        fee_type_entry = "maker"
     else:
+        entry_ts_ms = _ts_at(vwap_df, entry_bin, event.ts_ms + delay_bins * bin_size_ms)
+        bbo_entry = bbo_lookup.at(venue, entry_ts_ms)
+        bbo_available = (venue not in BBO_UNAVAILABLE_VENUES) and (bbo_entry is not None)
+        spread_entry = bbo_entry["spread_bps"] if bbo_entry else None
         entry_price_vwap = float(vwap_df[venue].iloc[entry_bin])
         slippage_entry_bps, slip_src_entry = compute_slippage_bps(
             slippage_model, spread_entry, bbo_available, fixed_slippage_bps,
         )
         entry_price_exec = entry_price_vwap * (1 + sign * slippage_entry_bps / 1e4)
         fee_entry = taker
-        fee_type = "taker"
+        fee_type_entry = "taker"
 
     # Walk forward, resolve SL/TP/hold.
     sl = order.stop_loss_bps
@@ -307,7 +365,7 @@ def _simulate_trade(
             break
 
     exit_price_vwap = float(vwap_df[venue].iloc[exit_bin])
-    exit_ts_ms = int(vwap_df["ts_ms"].iloc[exit_bin]) if "ts_ms" in vwap_df.columns else entry_ts_ms + (exit_bin - entry_bin) * bin_size_ms
+    exit_ts_ms = _ts_at(vwap_df, exit_bin, entry_ts_ms + (exit_bin - entry_bin) * bin_size_ms)
 
     bbo_exit = bbo_lookup.at(venue, exit_ts_ms)
     spread_exit = bbo_exit["spread_bps"] if bbo_exit else None
@@ -315,7 +373,8 @@ def _simulate_trade(
         slippage_model, spread_exit, bbo_exit is not None and venue not in BBO_UNAVAILABLE_VENUES, fixed_slippage_bps,
     )
     exit_price_exec = exit_price_vwap * (1 - sign * slippage_exit_bps / 1e4)
-    fee_exit = taker  # always close at market
+    fee_exit = maker if is_limit else taker
+    fee_type_exit = "maker" if is_limit else "taker"
 
     gross_pnl_bps = sign * (exit_price_vwap / entry_price_vwap - 1.0) * 1e4
     fee_total = fee_entry + fee_exit
@@ -332,7 +391,9 @@ def _simulate_trade(
         "side": order.side,
         "entry_type": order.entry_type,
         "entry_ts_ms": entry_ts_ms,
+        "entry_time_utc": utc_from_ms(entry_ts_ms),
         "exit_ts_ms": exit_ts_ms,
+        "exit_time_utc": utc_from_ms(exit_ts_ms),
         "entry_price_vwap": entry_price_vwap,
         "exit_price_vwap": exit_price_vwap,
         "entry_price_exec": entry_price_exec,
@@ -340,6 +401,8 @@ def _simulate_trade(
         "slippage_entry_bps": slippage_entry_bps,
         "slippage_exit_bps": slippage_exit_bps,
         "slippage_total_bps": slip_total,
+        "slippage_source_entry": slip_src_entry,
+        "slippage_source_exit": slip_src_exit,
         "slippage_source": slip_src_entry,
         "spread_at_entry_bps": spread_entry,
         "spread_at_exit_bps": spread_exit,
@@ -347,10 +410,15 @@ def _simulate_trade(
         "fee_entry_bps": fee_entry,
         "fee_exit_bps": fee_exit,
         "fee_total_bps": fee_total,
-        "fee_type": fee_type,
+        "fee_type_entry": fee_type_entry,
+        "fee_type_exit": fee_type_exit,
+        "fee_type": fee_type_entry,
         "net_pnl_bps": net_pnl_bps,
         "hold_ms": (exit_bin - entry_bin) * bin_size_ms,
+        "planned_hold_ms": hold_ms,
         "exit_reason": exit_reason,
+        "stop_loss_bps": order.stop_loss_bps,
+        "take_profit_bps": order.take_profit_bps,
         "mfe_bps": mfe_bps,
         "mae_bps": mae_bps,
         "mfe_time_ms": mfe_time_ms,
@@ -359,9 +427,15 @@ def _simulate_trade(
         "bbo_spread_at_exit_bps": spread_exit,
         "bbo_available": bbo_available,
         "n_lagging_at_signal": len(event.lagging_followers),
-        "leader_dev_sigma": event.extra.get("leader_dev_sigma"),
+        "leader_dev_sigma": event.extra.get("leader_dev_sigma", event.extra.get("leader_dev")),
         "_exit_bin_idx": exit_bin,
     }
+
+
+def _ts_at(vwap_df: pd.DataFrame, bin_idx: int, fallback: int) -> int:
+    if "ts_ms" in vwap_df.columns and 0 <= bin_idx < len(vwap_df):
+        return int(vwap_df["ts_ms"].iloc[bin_idx])
+    return int(fallback)
 
 
 def _build_equity(trades: list[dict]) -> list[dict]:
@@ -383,34 +457,76 @@ def _build_equity(trades: list[dict]) -> list[dict]:
     return rows
 
 
-def _build_stats(trades: list[dict], equity: list[dict], params: dict) -> dict:
+def _build_stats(
+    trades: list[dict],
+    equity: list[dict],
+    params: dict,
+    *,
+    n_errors: int = 0,
+    n_skipped_position: int = 0,
+    n_limit_attempts: int = 0,
+    n_limit_filled: int = 0,
+) -> dict:
     if not trades:
-        return {"n_trades": 0}
+        return _empty_stats(n_errors, n_skipped_position, n_limit_attempts, n_limit_filled)
     df = pd.DataFrame(trades)
     net = df["net_pnl_bps"]
     wins = (net > 0).sum()
+    gross_sum = float(df["gross_pnl_bps"].sum())
+    fees_sum = float(df["fee_total_bps"].sum())
+    slip_sum = float(df["slippage_total_bps"].sum())
+    losses = df.loc[df["net_pnl_bps"] < 0, "net_pnl_bps"]
+    wins_net = df.loc[df["net_pnl_bps"] > 0, "net_pnl_bps"]
+    duration_ms = max(1, int(df["exit_ts_ms"].max() - df["entry_ts_ms"].min()))
     stats = {
         "n_trades": len(df),
+        "total_trades": len(df),
+        "n_errors": int(n_errors),
+        "n_skipped_position_already_open": int(n_skipped_position),
+        "n_limit_attempts": int(n_limit_attempts),
+        "n_limit_filled": int(n_limit_filled),
+        "limit_fill_rate": float(n_limit_filled / n_limit_attempts) if n_limit_attempts else None,
         "win_rate": float(wins / len(df)),
         "total_net_pnl_bps": float(net.sum()),
-        "total_gross_pnl_bps": float(df["gross_pnl_bps"].sum()),
-        "total_fee_bps": float(df["fee_total_bps"].sum()),
-        "total_slippage_bps": float(df["slippage_total_bps"].sum()),
+        "total_gross_pnl_bps": gross_sum,
+        "total_fees_bps": fees_sum,
+        "total_fee_bps": fees_sum,
+        "total_slippage_bps": slip_sum,
+        "fee_pct_of_gross": float(abs(fees_sum / gross_sum) * 100.0) if gross_sum else None,
+        "slippage_pct_of_gross": float(abs(slip_sum / gross_sum) * 100.0) if gross_sum else None,
         "avg_trade_bps": float(net.mean()),
         "median_trade_bps": float(net.median()),
         "std_trade_bps": float(net.std(ddof=0)),
         "sharpe": float(net.mean() / net.std(ddof=0)) if net.std(ddof=0) > 0 else 0.0,
+        "profit_factor": float(wins_net.sum() / abs(losses.sum())) if len(losses) and abs(losses.sum()) > 0 else None,
         "max_drawdown_bps": float(min((e["drawdown_bps"] for e in equity), default=0.0)),
+        "max_dd_duration_ms": _max_dd_duration_ms(equity),
+        "avg_win_bps": float(wins_net.mean()) if len(wins_net) else None,
+        "avg_loss_bps": float(losses.mean()) if len(losses) else None,
+        "best_trade_bps": float(net.max()),
+        "worst_trade_bps": float(net.min()),
+        "avg_hold_ms": float(df["hold_ms"].mean()),
+        "avg_mfe_bps": float(df["mfe_bps"].mean()),
+        "avg_mae_bps": float(df["mae_bps"].mean()),
+        "mfe_mae_ratio": float(df["mfe_bps"].mean() / abs(df["mae_bps"].mean())) if abs(df["mae_bps"].mean()) > 0 else None,
+        "trades_per_hour": float(len(df) / (duration_ms / 3_600_000.0)),
+        "max_consec_wins": _max_streak(net > 0),
+        "max_consec_losses": _max_streak(net <= 0),
+        "avg_spread_at_entry_bps": _mean_or_none(df["spread_at_entry_bps"]),
+        "avg_slippage_bps": float(df["slippage_total_bps"].mean()),
         "fee_impact": {
-            "gross_bps": float(df["gross_pnl_bps"].sum()),
-            "fees_bps": float(df["fee_total_bps"].sum()),
-            "slippage_bps": float(df["slippage_total_bps"].sum()),
+            "gross_bps": gross_sum,
+            "fees_bps": fees_sum,
+            "slippage_bps": slip_sum,
             "net_bps": float(net.sum()),
         },
+        "by_signal": _by_group(df, "signal_type"),
         "by_entry_type": _by_group(df, "entry_type"),
         "by_exit_reason": _by_group(df, "exit_reason"),
         "by_venue": _by_group(df, "venue"),
+        "by_direction": _by_group(df, "direction"),
         "by_spread_bucket": _by_spread_bucket(df),
+        "by_hour_utc": _by_hour_utc(df),
     }
     if "entry_type" in df.columns and (df["entry_type"] == "limit").any():
         # Fill rate proxy: included limit trades / attempted (we only record filled; log attempts?)
@@ -418,8 +534,41 @@ def _build_stats(trades: list[dict], equity: list[dict], params: dict) -> dict:
     return stats
 
 
+def _empty_stats(n_errors: int, n_skipped_position: int, n_limit_attempts: int, n_limit_filled: int) -> dict:
+    return {
+        "n_trades": 0,
+        "total_trades": 0,
+        "n_errors": int(n_errors),
+        "n_skipped_position_already_open": int(n_skipped_position),
+        "n_limit_attempts": int(n_limit_attempts),
+        "n_limit_filled": int(n_limit_filled),
+        "limit_fill_rate": None,
+        "win_rate": 0.0,
+        "total_net_pnl_bps": 0.0,
+        "total_gross_pnl_bps": 0.0,
+        "total_fees_bps": 0.0,
+        "total_fee_bps": 0.0,
+        "total_slippage_bps": 0.0,
+        "fee_pct_of_gross": None,
+        "slippage_pct_of_gross": None,
+        "avg_trade_bps": 0.0,
+        "profit_factor": None,
+        "sharpe": 0.0,
+        "max_drawdown_bps": 0.0,
+        "by_signal": {},
+        "by_venue": {},
+        "by_direction": {},
+        "by_entry_type": {},
+        "by_spread_bucket": {},
+        "by_exit_reason": {},
+        "by_hour_utc": {},
+    }
+
+
 def _by_group(df: pd.DataFrame, col: str) -> dict:
     out = {}
+    if col not in df.columns:
+        return out
     for key, g in df.groupby(col):
         out[str(key)] = {
             "n": int(len(g)),
@@ -440,14 +589,65 @@ def _by_spread_bucket(df: pd.DataFrame) -> dict:
     mask_na = s.isna()
     if mask_na.any():
         g = df[mask_na]
-        out["no_bbo"] = {"n": int(len(g)), "avg_pnl_bps": float(g["net_pnl_bps"].mean())}
+        out["N/A"] = {
+            "n": int(len(g)),
+            "avg_net_pnl_bps": float(g["net_pnl_bps"].mean()),
+            "win_rate": float((g["net_pnl_bps"] > 0).mean()),
+        }
     prev = 0.0
     for hi in buckets:
         g = df[(~mask_na) & (s > prev) & (s <= hi)]
         if len(g):
-            out[f"<= {hi} bps"] = {"n": int(len(g)), "avg_pnl_bps": float(g["net_pnl_bps"].mean())}
+            key = f"{prev:g}-{hi:g}"
+            out[key] = {
+                "n": int(len(g)),
+                "avg_net_pnl_bps": float(g["net_pnl_bps"].mean()),
+                "win_rate": float((g["net_pnl_bps"] > 0).mean()),
+            }
         prev = hi
     g = df[(~mask_na) & (s > prev)]
     if len(g):
-        out[f"> {prev} bps"] = {"n": int(len(g)), "avg_pnl_bps": float(g["net_pnl_bps"].mean())}
+        out[f"{prev:g}+"] = {
+            "n": int(len(g)),
+            "avg_net_pnl_bps": float(g["net_pnl_bps"].mean()),
+            "win_rate": float((g["net_pnl_bps"] > 0).mean()),
+        }
     return out
+
+
+def _by_hour_utc(df: pd.DataFrame) -> dict:
+    if "entry_ts_ms" not in df.columns:
+        return {}
+    tmp = df.copy()
+    tmp["hour_utc"] = pd.to_datetime(tmp["entry_ts_ms"], unit="ms", utc=True).dt.hour
+    return _by_group(tmp, "hour_utc")
+
+
+def _mean_or_none(series: pd.Series) -> Optional[float]:
+    vals = pd.to_numeric(series, errors="coerce").dropna()
+    return float(vals.mean()) if len(vals) else None
+
+
+def _max_streak(mask: pd.Series) -> int:
+    best = cur = 0
+    for val in mask:
+        if bool(val):
+            cur += 1
+            best = max(best, cur)
+        else:
+            cur = 0
+    return int(best)
+
+
+def _max_dd_duration_ms(equity: list[dict]) -> int:
+    start = None
+    best = 0
+    for row in equity:
+        if row.get("drawdown_bps", 0.0) < 0 and start is None:
+            start = int(row["ts_ms"])
+        if row.get("drawdown_bps", 0.0) >= 0 and start is not None:
+            best = max(best, int(row["ts_ms"]) - start)
+            start = None
+    if start is not None and equity:
+        best = max(best, int(equity[-1]["ts_ms"]) - start)
+    return int(best)

@@ -73,5 +73,11 @@ class Strategy:
     fixed_slippage_bps: float = 1.0
     position_mode: str = "reject"
 
+    def __init__(self):
+        # Strategy subclasses commonly define ``params`` at class level so the
+        # UI can inspect defaults. Copy it per instance to avoid cross-run leaks
+        # when backtests apply params_override.
+        self.params = dict(getattr(self.__class__, "params", {}) or {})
+
     def on_event(self, event: Event, ctx: Context) -> Optional[Order]:
         raise NotImplementedError

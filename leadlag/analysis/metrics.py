@@ -32,7 +32,9 @@ def compute_metrics(
         if t0 >= n_bins or np.isnan(fvals[t0]):
             continue
         p0 = fvals[t0]
-        leader_name = ev["leader"] if ev["leader"] != "confirmed" else "OKX Perp"
+        leader_name = _leader_for_metrics(ev, vwap_df)
+        if leader_name is None:
+            continue
         lvals = vwap_df[leader_name].values
         if t0 >= len(lvals) or np.isnan(lvals[t0]):
             continue
@@ -70,6 +72,22 @@ def compute_metrics(
             "leader_move_bps": leader_move_abs / lvals[t0] * 10000,
         })
     return out
+
+
+def _leader_for_metrics(ev: dict, vwap_df: pd.DataFrame) -> str | None:
+    if ev.get("leader") and ev.get("leader") != "confirmed":
+        return ev["leader"]
+    if ev.get("anchor_leader") in vwap_df.columns:
+        return ev["anchor_leader"]
+    confirmer = ev.get("confirmer_leader")
+    if confirmer == "OKX Perp" and "Bybit Perp" in vwap_df.columns:
+        return "Bybit Perp"
+    if confirmer == "Bybit Perp" and "OKX Perp" in vwap_df.columns:
+        return "OKX Perp"
+    for candidate in ("OKX Perp", "Bybit Perp"):
+        if candidate in vwap_df.columns:
+            return candidate
+    return None
 
 
 def grid_search(

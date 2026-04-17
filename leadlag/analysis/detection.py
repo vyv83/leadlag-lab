@@ -103,8 +103,8 @@ def classify_signals(
     okx_events = clustered_by_leader.get("OKX Perp", [])
     bybit_events = clustered_by_leader.get("Bybit Perp", [])
 
-    signal_a = [dict(e, signal="A") for e in okx_events]
-    signal_b = [dict(e, signal="B") for e in bybit_events]
+    signal_a = [dict(e, signal="A", anchor_leader=e.get("leader")) for e in okx_events]
+    signal_b = [dict(e, signal="B", anchor_leader=e.get("leader")) for e in bybit_events]
 
     signal_c: list[dict] = []
     used_bybit: set[int] = set()
@@ -125,6 +125,7 @@ def classify_signals(
                     signal="C",
                     magnitude_sigma=max(anchor["magnitude_sigma"], confirmer["magnitude_sigma"]),
                     leader="confirmed",
+                    anchor_leader=anchor["leader"],
                     confirmer_leader=confirmer["leader"],
                     confirmer_bin=confirmer["bin_idx"],
                     confirmer_lag_ms=(confirmer["bin_idx"] - anchor["bin_idx"]) * bin_size_ms,

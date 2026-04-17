@@ -21,7 +21,9 @@ from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from leadlag import load_session, load_strategy, run_backtest
+from leadlag import load_session, load_strategy, run_backtest, list_sessions as core_list_sessions, run_monte_carlo
+from leadlag.backtest import BacktestResult
+from leadlag.contracts import ContractError, read_json
 from leadlag.monitor import system_stats, read_history, read_pings, list_data_files
 from leadlag.monitor.snapshot import read_collector_status
 
@@ -48,24 +50,7 @@ if UI_DIR.exists():
 
 @app.get("/api/sessions")
 def list_sessions():
-    root = DATA_DIR / "sessions"
-    if not root.is_dir():
-        return []
-    out = []
-    for d in sorted(root.iterdir()):
-        meta_p = d / "meta.json"
-        if not meta_p.exists():
-            continue
-        meta = json.loads(meta_p.read_text())
-        out.append({
-            "id": meta.get("session_id", d.name),
-            "collection_id": meta.get("collection_id"),
-            "params_hash": meta.get("params_hash"),
-            "n_events": meta.get("n_events", 0),
-            "n_signal_c": meta.get("n_signal_c", 0),
-            "venues": meta.get("venues", []),
-        })
-    return out
+    return core_list_sessions(DATA_DIR)
 
 
 @app.get("/api/sessions/{session_id}/meta")
@@ -101,12 +86,10 @@ def session_events(
 @app.get("/api/sessions/{session_id}/event/{bin_idx}")
 def session_event_detail(session_id: str, bin_idx: int):
     s = _load_session(session_id)
-    ev = next((r for r in s.events.rows if int(r.get("bin_idx", -1)) == bin_idx), None)
-    if ev is None:
-        raise HTTPException(404, f"Event bin_idx={bin_idx} not found")
-    pw = next((w for w in s.price_windows if int(w.get("bin_idx", -1)) == bin_idx), None)
-    bw = next((w for w in s.bbo_windows if int(w.get("bin_idx", -1)) == bin_idx), None)
-    return {"event": ev, "price_window": pw, "bbo_window": bw}
+    try:
+        return s.event_detail(bin_idx)
+    except KeyError:
+        raise HTTPException(404, {"error": "event_not_found", "session_id": session_id, "bin_idx": bin_idx})
 
 
 @app.get("/api/sessions/{session_id}/quality")
@@ -207,14 +190,28 @@ def backtest_artifact(bt_id: str, artifact: str):
 
 @app.get("/api/backtests/{bt_id}/trade/{trade_id}")
 def backtest_trade_detail(bt_id: str, trade_id: int):
-    trades_p = DATA_DIR / "backtest" / bt_id / "trades.json"
+    bt_root = DATA_DIR / "backtest" / bt_id
+    trades_p = bt_root / "trades.json"
     if not trades_p.exists():
-        raise HTTPException(404, "trades.json missing")
+        raise HTTPException(404, {"error": "artifact_missing", "artifact": "trades.json", "backtest_id": bt_id})
     trades = json.loads(trades_p.read_text())
     t = next((x for x in trades if int(x.get("trade_id", -1)) == trade_id), None)
     if t is None:
-        raise HTTPException(404, f"trade_id={trade_id} not found")
-    return {"trade": t}
+        raise HTTPException(404, {"error": "trade_not_found", "backtest_id": bt_id, "trade_id": trade_id})
+    meta_p = bt_root / "meta.json"
+    meta = json.loads(meta_p.read_text()) if meta_p.exists() else {}
+    detail = {"trade": t, "meta": meta, "total_trades": len(trades)}
+    if meta.get("session_id") and t.get("signal_bin_idx") is not None:
+        try:
+            session = load_session(meta["session_id"], data_dir=DATA_DIR)
+            detail.update(session.event_detail(int(t["signal_bin_idx"])))
+        except Exception as exc:
+            detail["event_error"] = f"{type(exc).__name__}: {exc}"
+    prev_ids = [int(x.get("trade_id", -1)) for x in trades if int(x.get("trade_id", -1)) < trade_id]
+    next_ids = [int(x.get("trade_id", -1)) for x in trades if int(x.get("trade_id", -1)) > trade_id]
+    detail["prev_trade_id"] = max(prev_ids) if prev_ids else None
+    detail["next_trade_id"] = min(next_ids) if next_ids else None
+    return detail
 
 
 @app.post("/api/backtests/run")
@@ -223,21 +220,54 @@ def backtest_run(body: dict = Body(...)):
     session_id = body.get("session_id")
     params_override = body.get("params_override")
     if not name or not session_id:
-        raise HTTPException(400, "strategy_name and session_id required")
+        raise HTTPException(400, {"error": "missing_fields", "required": ["strategy_name", "session_id"]})
     strategy_path = DATA_DIR / "strategies" / f"{name}.py"
     if not strategy_path.exists():
-        raise HTTPException(400, f"Strategy file not found: {strategy_path}")
+        raise HTTPException(400, {"error": "strategy_not_found", "path": str(strategy_path)})
     try:
         strategy = load_strategy(str(strategy_path))
     except Exception as e:
-        raise HTTPException(400, f"Strategy load failed: {type(e).__name__}: {e}")
+        raise HTTPException(400, {"error": "strategy_load_failed", "type": type(e).__name__, "message": str(e)})
     try:
         session = load_session(session_id, data_dir=DATA_DIR)
     except Exception as e:
-        raise HTTPException(400, f"Session load failed: {type(e).__name__}: {e}")
-    result = run_backtest(strategy, session, params_override=params_override, data_dir=DATA_DIR)
-    out = result.save(data_dir=DATA_DIR)
-    return {"backtest_id": out.name, "n_trades": len(result.trades)}
+        raise HTTPException(400, {"error": "session_load_failed", "type": type(e).__name__, "message": str(e)})
+    try:
+        result = run_backtest(strategy, session, params_override=params_override, data_dir=DATA_DIR)
+        out = result.save(data_dir=DATA_DIR)
+    except ContractError as e:
+        raise HTTPException(500, {"error": "contract_validation_failed", "message": str(e)})
+    except Exception as e:
+        raise HTTPException(400, {"error": "backtest_failed", "type": type(e).__name__, "message": str(e)})
+    return {"backtest_id": out.name, "n_trades": len(result.trades), "stats": result.stats}
+
+
+@app.post("/api/backtests/{bt_id}/montecarlo/run")
+def backtest_montecarlo_run(bt_id: str, body: dict = Body(default_factory=dict)):
+    bt_root = DATA_DIR / "backtest" / bt_id
+    if not bt_root.is_dir():
+        raise HTTPException(404, {"error": "backtest_not_found", "backtest_id": bt_id})
+    trades = read_json(bt_root / "trades.json") if (bt_root / "trades.json").exists() else []
+    meta = read_json(bt_root / "meta.json") if (bt_root / "meta.json").exists() else {}
+    stats = read_json(bt_root / "stats.json") if (bt_root / "stats.json").exists() else {}
+    result = BacktestResult(
+        strategy_name=meta.get("strategy_name", bt_id),
+        session_id=meta.get("session_id", ""),
+        params=meta.get("strategy_params", meta.get("params", {})),
+        trades=trades,
+        equity=read_json(bt_root / "equity.json") if (bt_root / "equity.json").exists() else [],
+        stats=stats,
+        meta={**meta, "backtest_id": bt_id},
+    )
+    mc = run_monte_carlo(
+        result,
+        n=int(body.get("n_simulations", body.get("n", 10_000))),
+        method=body.get("method", "trade_shuffle"),
+        block_size=int(body.get("block_size", 10)),
+        seed=body.get("seed", 42),
+    )
+    mc.save(bt_root)
+    return {"ok": True, "backtest_id": bt_id, **mc.summary()}
 
 
 # ─── system / dashboard ───
