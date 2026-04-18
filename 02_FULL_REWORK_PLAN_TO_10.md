@@ -1319,7 +1319,7 @@ Definition of done:
 
 - same strategy file runs in backtest and paper, with comparable metrics.
 
-## 11. Дополнения из `CRITIQUE.md`, которые надо добавить в основной план
+## 11. Дополнения из `91_LEGACY_CRITIQUE.md`, которые надо добавить в основной план
 
 Внешняя критика полезна как инженерный bug checklist. Эти пункты стоит явно добавить в основной rework-plan:
 

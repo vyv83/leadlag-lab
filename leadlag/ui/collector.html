@@ -6,14 +6,17 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><h1>Collector</h1>
+<header><h1>leadlag</h1>
 <nav>
   <a href="dashboard.html">Dashboard</a>
-  <a href="collector.html">Collector</a>
+  <a href="collector.html" class="active">Collector</a>
   <a href="explorer.html">Explorer</a>
   <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
   <a href="backtest.html">Backtests</a>
+  <a href="montecarlo.html">Monte Carlo</a>
+  <a href="paper.html">Paper</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
 </nav>
 </header>
 <main>
@@ -89,7 +92,7 @@ async function loadVenues() {
     tr.innerHTML = `
       <td><input class="venueCheck" type="checkbox" value="${v.name}" ${v.enabled ? "checked" : ""}></td>
       <td>${v.name}</td><td>${v.role}</td><td>${fmt(v.taker_fee_bps)}</td><td>${fmt(v.maker_fee_bps)}</td>
-      <td>${v.bbo_available ? "yes" : "N/A"}</td><td>${v.keepalive_type || "exchange"}</td><td>${v.enabled ? "yes" : "no"}</td>
+      <td>${naMark(v.bbo_available)}</td><td>${v.keepalive_type || "exchange"}</td><td>${checkMark(v.enabled)}</td>
       <td class="wscol">${v.ws_url}</td>`;
     tbody.appendChild(tr);
   });
@@ -116,8 +119,8 @@ function renderStatus(st) {
   const kv = document.getElementById("status");
   kv.innerHTML = "";
   const rows = [
-    ["running", st.running ? "yes" : "no"],
-    ["proc alive", st.proc_alive ? "yes" : "no"],
+    ["running", checkMark(st.running)],
+    ["proc alive", checkMark(st.proc_alive)],
     ["session id", st.session_id || "—"],
     ["started UTC", utc(st.start_time)],
     ["planned", `${fmt(st.planned_duration_s, 0)}s`],
@@ -126,7 +129,11 @@ function renderStatus(st) {
     ["updated UTC", utc(st.updated_at_ms)],
     ["state", st.stale ? "stale" : (st.running ? "running" : "stopped")],
   ];
-  rows.forEach(([k, v]) => { kv.appendChild(el("div", {class:"k"}, [k])); kv.appendChild(el("div", {}, [String(v)])); });
+  rows.forEach(([k, v]) => {
+    kv.appendChild(el("div", {class:"k"}, [k]));
+    const value = el("div");
+    kv.appendChild(setValueContent(value, v));
+  });
   document.getElementById("start").disabled = !!st.running;
   document.getElementById("stop").disabled = !st.running && !st.proc_alive;
   document.getElementById("clearStale").hidden = !st.stale;
@@ -151,7 +158,7 @@ function renderLog(rows) {
 }
 function renderFiles(rows) {
   fillTable("#files", rows, f => [
-    f.path, fmt(f.size_mb), f.rows ?? "—",
+    f.path, humanBytes(f.size_mb * 1e6), f.rows ?? "—",
     f.ts_min ? `${utc(f.ts_min)} → ${utc(f.ts_max)}` : "—",
     (f.venues || []).join(", "),
   ]);

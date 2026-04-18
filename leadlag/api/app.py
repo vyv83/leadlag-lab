@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -143,6 +144,15 @@ def session_quality(session_id: str):
     return {"quality": s.quality, "meta": s.meta}
 
 
+@app.delete("/api/sessions/{session_id}")
+def delete_session(session_id: str):
+    session_dir = DATA_DIR / "sessions" / session_id
+    if not session_dir.exists():
+        raise HTTPException(404, f"session not found: {session_id}")
+    shutil.rmtree(session_dir)
+    return {"ok": True}
+
+
 # ─── strategies ───
 
 @app.get("/api/strategies")
@@ -155,14 +165,24 @@ def list_strategies():
         entry = {"name": p.stem, "path": str(p), "valid": True, "error": None}
         try:
             s = load_strategy(str(p))
+            params = getattr(s, "params", {})
             entry.update({
                 "class_name": s.__class__.__name__,
                 "description": getattr(s, "description", ""),
-                "params": getattr(s, "params", {}),
+                "params": params,
+                "version": getattr(s, "version", ""),
+                "venues": _extract_venues(params),
+                "signal_type": _extract_signal_type(params),
             })
         except Exception as e:
             entry["valid"] = False
             entry["error"] = f"{type(e).__name__}: {e}"
+        # last_backtest_summary
+        entry["last_backtest_summary"] = _last_backtest_summary(p.stem)
+        # status flags
+        entry["has_backtest"] = _strategy_has_backtest(p.stem)
+        entry["has_paper"] = _strategy_has_paper(p.stem)
+        entry["has_live"] = False  # live trading not implemented yet
         out.append(entry)
     return out
 
@@ -191,6 +211,21 @@ def delete_strategy(name: str):
     if p.exists():
         p.unlink()
     return {"ok": True}
+
+
+@app.post("/api/strategies/save")
+def save_strategy(body: dict = Body(...)):
+    name = body.get("name")
+    code = body.get("code")
+    if not name or code is None:
+        raise HTTPException(400, {"error": "missing_fields", "required": ["name", "code"]})
+    if not name.isidentifier() and not all(c.isalnum() or c in ("_", "-") for c in name):
+        raise HTTPException(400, {"error": "invalid_name", "name": name})
+    strategies_dir = DATA_DIR / "strategies"
+    strategies_dir.mkdir(parents=True, exist_ok=True)
+    target = strategies_dir / f"{name}.py"
+    target.write_text(code)
+    return {"ok": True, "path": str(target)}
 
 
 # ─── backtests ───
@@ -316,6 +351,17 @@ def backtest_montecarlo_run(bt_id: str, body: dict = Body(default_factory=dict))
     )
     mc.save(bt_root)
     return {"ok": True, "backtest_id": bt_id, **mc.summary()}
+
+
+@app.get("/api/backtests/{bt_id}/montecarlo")
+def backtest_montecarlo_get(bt_id: str):
+    bt_root = DATA_DIR / "backtest" / bt_id
+    if not bt_root.is_dir():
+        raise HTTPException(404, {"error": "backtest_not_found", "backtest_id": bt_id})
+    mc_path = bt_root / "montecarlo.json"
+    if not mc_path.exists():
+        return {}
+    return json.loads(mc_path.read_text())
 
 
 # ─── system / dashboard ───
@@ -638,6 +684,106 @@ def _quality_summary(q: dict) -> dict:
         "coverage_pct": q.get("coverage_pct"),
         "ticks_per_venue": q.get("ticks_per_venue", {}),
     }
+
+
+def _extract_venues(params: dict) -> list[str]:
+    """Extract venue/follower names from strategy params."""
+    for key in ("followers", "venue", "venues", "follower"):
+        val = params.get(key)
+        if val is not None:
+            if isinstance(val, list):
+                return val
+            if isinstance(val, str):
+                return [val]
+    return []
+
+
+def _extract_signal_type(params: dict) -> list[str]:
+    """Extract signal types from strategy params."""
+    for key in ("signal", "signals"):
+        val = params.get(key)
+        if val is not None:
+            if isinstance(val, list):
+                return val
+            if isinstance(val, str):
+                return [val]
+    return []
+
+
+def _last_backtest_summary(strategy_name: str) -> Optional[dict]:
+    """Find latest backtest for a strategy and return summary metrics."""
+    bt_root = DATA_DIR / "backtest"
+    if not bt_root.is_dir():
+        return None
+    best: Optional[dict] = None
+    best_date: str = ""
+    for d in bt_root.iterdir():
+        if not d.is_dir():
+            continue
+        meta_p = d / "meta.json"
+        if not meta_p.exists():
+            continue
+        try:
+            meta = json.loads(meta_p.read_text())
+        except Exception:
+            continue
+        if meta.get("strategy_name") != strategy_name:
+            continue
+        date_str = meta.get("created_at", "")
+        if date_str > best_date:
+            best_date = date_str
+            stats_p = d / "stats.json"
+            stats = json.loads(stats_p.read_text()) if stats_p.exists() else {}
+            best = {
+                "id": d.name,
+                "date": date_str,
+                "n_trades": stats.get("n_trades", 0),
+                "total_net_pnl_bps": stats.get("total_net_pnl_bps", 0.0),
+                "win_rate": stats.get("win_rate", 0.0),
+                "sharpe": stats.get("sharpe", 0.0),
+                "avg_trade_bps": stats.get("avg_trade_bps", 0.0),
+            }
+    return best
+
+
+def _strategy_has_backtest(strategy_name: str) -> bool:
+    """Check if any backtest exists for this strategy."""
+    bt_root = DATA_DIR / "backtest"
+    if not bt_root.is_dir():
+        return False
+    for d in bt_root.iterdir():
+        if not d.is_dir():
+            continue
+        meta_p = d / "meta.json"
+        if not meta_p.exists():
+            continue
+        try:
+            meta = json.loads(meta_p.read_text())
+        except Exception:
+            continue
+        if meta.get("strategy_name") == strategy_name:
+            return True
+    return False
+
+
+def _strategy_has_paper(strategy_name: str) -> bool:
+    """Check if any paper trading session exists for this strategy."""
+    paper_root = DATA_DIR / "paper"
+    if not paper_root.is_dir():
+        return False
+    for d in paper_root.iterdir():
+        if not d.is_dir():
+            continue
+        cfg_p = d / "config.json"
+        if not cfg_p.exists():
+            continue
+        try:
+            cfg = json.loads(cfg_p.read_text())
+        except Exception:
+            continue
+        if cfg.get("strategy_name") == strategy_name or d.name == strategy_name:
+            return True
+    return False
 
 
 def main():

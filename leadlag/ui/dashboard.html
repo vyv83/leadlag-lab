@@ -7,9 +7,9 @@
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>leadlag-platform</h1>
+<header><h1>leadlag</h1>
 <nav>
-  <a href="dashboard.html">Dashboard</a>
+  <a href="dashboard.html" class="active">Dashboard</a>
   <a href="collector.html">Collector</a>
   <a href="explorer.html">Explorer</a>
   <a href="quality.html">Quality</a>
@@ -17,73 +17,107 @@
   <a href="backtest.html">Backtests</a>
   <a href="montecarlo.html">Monte Carlo</a>
   <a href="paper.html">Paper</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
 </nav>
 </header>
 <main>
-<section class="cards" id="topCards"></section>
 
-<section>
-  <h2>System Health</h2>
-  <div class="cards" id="systemCards"></div>
-  <div class="chart-grid">
-    <div class="chart small" id="cpuChart"></div>
-    <div class="chart small" id="ramChart"></div>
-    <div class="chart small" id="netChart"></div>
-  </div>
-</section>
+<!-- Group 1: System Health -->
+<div class="section-group">
+  <section class="cards" id="topCards"></section>
+  <section>
+    <h2>System Health</h2>
+    <div class="cards" id="systemCards"></div>
+    <div class="chart-grid">
+      <div class="chart small" id="cpuChart"></div>
+      <div class="chart small" id="ramChart"></div>
+      <div class="chart small" id="netChart"></div>
+    </div>
+  </section>
+</div>
 
-<section class="breakdown-grid">
-  <div>
-    <h2>Processes</h2>
-    <table id="processes"><thead><tr><th>name</th><th>status</th><th>pid</th><th>mem MB</th><th>uptime</th></tr></thead><tbody></tbody></table>
-  </div>
-  <div>
-    <h2>Pings to Venues</h2>
-    <table id="pings"><thead><tr><th>venue</th><th>host</th><th>latency</th><th>status</th></tr></thead><tbody></tbody></table>
-  </div>
-</section>
+<!-- Group 2: Processes + Pings -->
+<div class="section-group">
+  <section class="breakdown-grid">
+    <div>
+      <h2>Processes</h2>
+      <table id="processes"><thead><tr><th>name</th><th>status</th><th>pid</th><th>mem MB</th><th>uptime</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div>
+      <h2>Pings to Venues</h2>
+      <table id="pings"><thead><tr><th>venue</th><th>host</th><th>latency</th><th>status</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+</div>
 
-<section>
-  <h2>Collector Status</h2>
-  <div class="toolbar">
-    <button id="startCollector">Start Collection</button>
-    <button id="stopCollector">Stop Collector</button>
-    <button id="clearStale" hidden>Clear stale status</button>
-    <button id="runAnalysisLatest">Run Analysis</button>
-    <a class="button-link" href="collector.html">Open Collector</a>
-    <a id="openLatest" class="button-link" href="explorer.html">Open Latest Session</a>
-    <a class="button-link" href="/leadlag-lab/lab/" target="_blank">Open Jupyter</a>
-  </div>
-  <table id="collectorVenues"><thead><tr>
-    <th>venue</th><th>role</th><th>status</th><th>ticks</th><th>ticks/s</th><th>BBO</th><th>BBO/s</th>
-    <th>reconnects</th><th>last tick UTC</th><th>seconds idle</th><th>last price</th><th>last error</th>
-  </tr></thead><tbody></tbody></table>
-</section>
+<!-- Group 3: Collector Status -->
+<div class="section-group">
+  <section>
+    <h2>Collector Status</h2>
+    <div class="toolbar">
+      <button id="startCollector">Start Collection</button>
+      <button id="stopCollector">Stop Collector</button>
+      <button id="clearStale" hidden>Clear stale status</button>
+      <button id="runAnalysisLatest">Run Analysis</button>
+      <a class="button-link" href="collector.html">Open Collector</a>
+      <a id="openLatest" class="button-link" href="explorer.html">Open Latest Session</a>
+    </div>
+    <table id="collectorVenues"><thead><tr>
+      <th>venue</th><th>role</th><th>status</th><th>ticks</th><th>ticks/s</th><th>BBO</th><th>BBO/s</th>
+      <th>reconnects</th><th>last tick UTC</th><th>seconds idle</th><th>last price</th><th>last error</th>
+    </tr></thead><tbody></tbody></table>
+  </section>
+</div>
 
-<section class="breakdown-grid">
-  <div>
-    <h2>Latest Collections</h2>
-    <table id="collections"><thead><tr><th>id</th><th>range UTC</th><th>ticks</th><th>BBO</th><th>venues</th><th>analysis</th></tr></thead><tbody></tbody></table>
-  </div>
-  <div>
-    <h2>Latest Sessions</h2>
-    <table id="sessions"><thead><tr><th>id</th><th>date</th><th>events</th><th>A/B/C</th><th>venues</th></tr></thead><tbody></tbody></table>
-  </div>
-  <div>
-    <h2>Latest Backtests</h2>
-    <table id="backtests"><thead><tr><th>id</th><th>strategy</th><th>trades</th><th>net</th><th>win</th><th>MC</th></tr></thead><tbody></tbody></table>
-  </div>
-</section>
+<!-- Group 4: Paper Trader Status -->
+<div class="section-group" id="paperStatusSection">
+  <section>
+    <h2>Paper Trader</h2>
+    <div class="cards" id="paperCards"></div>
+    <div class="toolbar">
+      <a class="button-link" id="openPaperDashboard" href="paper.html">Open Paper Dashboard</a>
+    </div>
+  </section>
+</div>
+
+<!-- Group 5: Latest data -->
+<div class="section-group">
+  <section class="breakdown-grid">
+    <div>
+      <h2>Latest Collections</h2>
+      <table id="collections"><thead><tr><th>id</th><th>range UTC</th><th>ticks</th><th>BBO</th><th>venues</th><th>analysis</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div>
+      <h2>Latest Sessions</h2>
+      <table id="sessions"><thead><tr><th>id</th><th>date</th><th>events</th><th>A/B/C</th><th>venues</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div>
+      <h2>Latest Backtests</h2>
+      <table id="backtests"><thead><tr><th>id</th><th>strategy</th><th>trades</th><th>net</th><th>win</th><th>MC</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+</div>
+
+<!-- Group 6: Last Analysis Session -->
+<div class="section-group" id="lastSessionSection">
+  <section>
+    <h2>Last Analysis Session</h2>
+    <div class="cards" id="lastSessionCards"></div>
+    <div class="toolbar">
+      <a class="button-link" id="openSessionExplorer" href="#">Open in Explorer</a>
+      <button id="reanalyzeSession">Re-analyze</button>
+    </div>
+  </section>
+</div>
 
 <section>
   <h2>Active Files</h2>
   <table id="files"><thead><tr><th>path</th><th>size MB</th><th>rows</th><th>time range UTC</th><th>venues</th><th>modified UTC</th></tr></thead><tbody></tbody></table>
 </section>
+
 </main>
 <script src="app.js"></script>
 <script>
-const plotBase = { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"}, margin:{t:24,l:45,r:20,b:35} };
-const plotCfg = { responsive:true, displayModeBar:true };
 let latestCollections = [];
 
 async function refreshAll() {
@@ -110,10 +144,12 @@ async function refreshAll() {
   renderSessions(sessions);
   renderBacktests(backtests);
   renderFiles(files.slice(-8).reverse());
+  renderPaperStatus(paper);
+  renderLastSession(sessions);
 }
 
 function renderTop(sys, collector, paper, collections, sessions, backtests, strategies) {
-  const cards = [
+  fillCards("topCards", [
     ["UTC", utc(sys.ts)],
     ["Collections", `${collections.length} raw`],
     ["Sessions", `${sessions.length} total`],
@@ -121,8 +157,7 @@ function renderTop(sys, collector, paper, collections, sessions, backtests, stra
     ["Backtests", `${backtests.length} total`],
     ["Collector", collector.stale ? `stale ${collector.session_id || ""}` : collector.running ? `running ${collector.session_id || ""}` : "stopped"],
     ["Paper", paper.blocked ? `blocked: ${paper.mode}` : paper.running ? "running" : "stopped"],
-  ];
-  fillCards("topCards", cards);
+  ]);
   const latest = sessions[0];
   const open = document.getElementById("openLatest");
   open.href = latest ? `explorer.html?session=${latest.id}` : "explorer.html";
@@ -141,21 +176,29 @@ function renderSystem(sys, hist) {
   ]);
   if (!hist.length) return;
   const xs = hist.map(r => new Date(Number(r.ts)));
-  Plotly.react("cpuChart", [{x:xs,y:hist.map(r=>r.cpu_pct),mode:"lines",name:"CPU %"}], {...plotBase,title:{text:"CPU"},yaxis:{title:"%"},xaxis:{title:"UTC"}}, plotCfg);
-  Plotly.react("ramChart", [{x:xs,y:hist.map(r=>r.ram_used_gb),mode:"lines",name:"RAM GB"}], {...plotBase,title:{text:"RAM"},yaxis:{title:"GB"},xaxis:{title:"UTC"}}, plotCfg);
+  Plotly.react("cpuChart", [{x:xs,y:hist.map(r=>r.cpu_pct),mode:"lines",name:"CPU %"}], {...PLOT_LAYOUT, title:{text:"CPU"}, yaxis:{title:"%"}, xaxis:{title:"UTC"}}, PLOT_CFG);
+  Plotly.react("ramChart", [{x:xs,y:hist.map(r=>r.ram_used_gb),mode:"lines",name:"RAM GB"}], {...PLOT_LAYOUT, title:{text:"RAM"}, yaxis:{title:"GB"}, xaxis:{title:"UTC"}}, PLOT_CFG);
   Plotly.react("netChart", [
     {x:xs,y:hist.map(r=>r.net_down_bps || 0),mode:"lines",name:"down"},
     {x:xs,y:hist.map(r=>r.net_up_bps || 0),mode:"lines",name:"up"},
-  ], {...plotBase,title:{text:"Network"},yaxis:{title:"bytes/s"},xaxis:{title:"UTC"}}, plotCfg);
+  ], {...PLOT_LAYOUT, title:{text:"Network"}, yaxis:{title:"bytes/s"}, xaxis:{title:"UTC"}}, PLOT_CFG);
 }
 
 function renderProcesses(rows) {
   fillTable("#processes", rows, r => [r.name, r.status, r.pid, fmt(r.mem_mb, 1), seconds(r.uptime_s)]);
 }
+
 function renderPings(payload) {
   const rows = Object.entries(payload.venues || {}).map(([venue, r]) => ({venue, ...r}));
-  fillTable("#pings", rows, r => [r.venue, r.host, fmt(r.latency_ms, 1), r.status]);
+  fillTable("#pings", rows, r => {
+    const latency = Number(r.latency_ms || 0);
+    const cls = latency < 30 ? "ping-ok" : latency <= 60 ? "ping-warn" : "ping-bad";
+    const td = el("td", { className: cls });
+    td.textContent = fmt(r.latency_ms, 1);
+    return [r.venue, r.host, td, r.status];
+  });
 }
+
 function renderCollector(st) {
   document.getElementById("startCollector").disabled = !!st.running;
   document.getElementById("stopCollector").disabled = !st.running && !st.proc_alive;
@@ -165,6 +208,7 @@ function renderCollector(st) {
     r.reconnects, utc(r.last_tick_ts), fmt(r.seconds_since_last_tick), fmt(r.last_price, 2), r.last_error || "",
   ]);
 }
+
 function renderCollections(rows) {
   fillTable("#collections", rows.slice(0, 8), r => [
     r.id,
@@ -175,10 +219,11 @@ function renderCollections(rows) {
     r.latest_session_id ? linkTo(`explorer.html?session=${r.latest_session_id}`, "open") : analysisButton(r.id),
   ]);
 }
+
 function analysisButton(collectionId) {
-  const btn = el("button", { onclick: () => runAnalysis(collectionId) }, ["Analyze"]);
-  return btn;
+  return el("button", { onclick: () => runAnalysis(collectionId) }, ["Analyze"]);
 }
+
 function renderSessions(rows) {
   fillTable("#sessions", rows.slice(0, 8), r => [
     linkTo(`explorer.html?session=${r.id}`, r.id),
@@ -188,6 +233,7 @@ function renderSessions(rows) {
     r.n_venues,
   ]);
 }
+
 function renderBacktests(rows) {
   fillTable("#backtests", rows.slice(-8).reverse(), r => [
     linkTo(`backtest.html?id=${r.id}`, r.id),
@@ -198,6 +244,7 @@ function renderBacktests(rows) {
     r.has_montecarlo ? linkTo(`montecarlo.html?backtest=${r.id}`, "open") : linkTo(`montecarlo.html?backtest=${r.id}`, "run"),
   ]);
 }
+
 function renderFiles(rows) {
   fillTable("#files", rows, f => [
     f.path, f.size_mb, f.rows ?? "—",
@@ -206,26 +253,47 @@ function renderFiles(rows) {
     utc(f.modified),
   ]);
 }
-function fillCards(id, rows) {
-  const box = document.getElementById(id);
-  box.innerHTML = "";
-  rows.forEach(([label, value]) => box.appendChild(el("div", {class:"metric-card"}, [
-    el("div", {class:"metric-label"}, [label]),
-    el("div", {class:"metric-value"}, [String(value)]),
-  ])));
+
+function renderPaperStatus(paper) {
+  const section = document.getElementById("paperStatusSection");
+  if (!paper || !paper.running) {
+    fillCards("paperCards", [["Status", "stopped"]]);
+    return;
+  }
+  const hitRate = paper.n_trades_closed > 0
+    ? pct((paper.n_wins || 0) / paper.n_trades_closed)
+    : "—";
+  fillCards("paperCards", [
+    ["Strategy", `${paper.strategy || "—"} v${paper.strategy_version || "?"}`],
+    ["Uptime", seconds(paper.uptime_s)],
+    ["Today Equity", `${signed(Number(paper.equity_today_bps || 0))} bps`],
+    ["Trades Today", `${paper.n_trades_closed || 0} / hit ${hitRate}`],
+    ["Last Signal", paper.last_signal_time ? utc(paper.last_signal_time) : "—"],
+    ["Status", paper.blocked ? `blocked: ${paper.mode}` : "running"],
+  ]);
 }
-function seconds(s) {
-  s = Number(s || 0);
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
-  return h ? `${h}h ${m}m` : `${m}m ${sec}s`;
+
+function renderLastSession(sessions) {
+  const section = document.getElementById("lastSessionSection");
+  const latest = sessions && sessions[0];
+  if (!latest) {
+    fillCards("lastSessionCards", [["Status", "No sessions yet"]]);
+    document.getElementById("openSessionExplorer").classList.add("disabled");
+    document.getElementById("reanalyzeSession").disabled = true;
+    return;
+  }
+  fillCards("lastSessionCards", [
+    ["Session ID", linkTo(`explorer.html?session=${latest.id}`, latest.id)],
+    ["Events", `${latest.n_events || 0}`],
+    ["A / B / C", `${latest.n_signal_a || 0} / ${latest.n_signal_b || 0} / ${latest.n_signal_c || 0}`],
+    ["Date", latest.date || "—"],
+    ["Venues", `${latest.n_venues || 0}`],
+  ]);
+  document.getElementById("openSessionExplorer").href = `explorer.html?session=${latest.id}`;
+  document.getElementById("openSessionExplorer").classList.remove("disabled");
+  document.getElementById("reanalyzeSession").disabled = false;
 }
-function humanBytes(x) {
-  x = Number(x || 0);
-  if (x >= 1e9) return `${fmt(x / 1e9, 2)} GB`;
-  if (x >= 1e6) return `${fmt(x / 1e6, 2)} MB`;
-  if (x >= 1e3) return `${fmt(x / 1e3, 2)} KB`;
-  return `${fmt(x, 0)} B`;
-}
+
 async function runAnalysis(collectionId) {
   document.getElementById("runAnalysisLatest").disabled = true;
   const res = await postJSON(`/api/collections/${collectionId}/analyze`, {
@@ -247,6 +315,10 @@ document.getElementById("clearStale").onclick = async () => {
   refreshAll();
 };
 document.getElementById("runAnalysisLatest").onclick = async () => {
+  if (!latestCollections.length) return;
+  await runAnalysis(latestCollections[0].id);
+};
+document.getElementById("reanalyzeSession").onclick = async () => {
   if (!latestCollections.length) return;
   await runAnalysis(latestCollections[0].id);
 };

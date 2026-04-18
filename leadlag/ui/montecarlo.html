@@ -7,13 +7,17 @@
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>Monte Carlo</h1>
+<header><h1>leadlag</h1>
 <nav>
   <a href="dashboard.html">Dashboard</a>
+  <a href="collector.html">Collector</a>
   <a href="explorer.html">Explorer</a>
+  <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
   <a href="backtest.html">Backtests</a>
-  <a href="montecarlo.html">Monte Carlo</a>
+  <a href="montecarlo.html" class="active">Monte Carlo</a>
+  <a href="paper.html">Paper</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
 </nav>
 </header>
 <main>
@@ -58,14 +62,6 @@ let currentId = qs("backtest");
 let meta = {};
 let equity = [];
 let mc = {};
-
-const layoutBase = {
-  paper_bgcolor: "#0e1117",
-  plot_bgcolor: "#0e1117",
-  font: { color: "#c9d1d9" },
-  margin: { t: 26, r: 55, b: 45, l: 55 },
-};
-const config = { responsive: true, displayModeBar: true };
 
 async function init() {
   backtests = await fetchJSON("/api/backtests");
@@ -126,7 +122,7 @@ async function runMonteCarlo() {
 }
 
 function renderCards() {
-  const cards = [
+  fillCards("cards", [
     ["p-value", pct(mc.p_value)],
     ["Percentile", `${fmt(mc.percentile)}%`],
     ["Real PnL", `${signed(Number(mc.real_pnl || 0))} bps`],
@@ -136,14 +132,8 @@ function renderCards() {
     ["Probability Profit", pct(mc.prob_of_profit)],
     ["Simulations", mc.n_simulations],
     ["Method", mc.method],
-  ];
-  const box = document.getElementById("cards");
-  box.hidden = false;
-  box.innerHTML = "";
-  cards.forEach(([label, value]) => box.appendChild(el("div", { class: "metric-card" }, [
-    el("div", { class: "metric-label" }, [label]),
-    el("div", { class: "metric-value" }, [String(value)]),
-  ])));
+  ]);
+  document.getElementById("cards").hidden = false;
   renderWarnings();
 }
 
@@ -170,11 +160,12 @@ function renderCharts() {
     traces.push({ x: percentiles.x, y: percentiles.p95, name: "95th percentile", mode: "lines", line: { color: "#d29922", dash: "dash" } });
   }
   Plotly.react("equityFan", traces, {
-    ...layoutBase,
+    ...PLOT_LAYOUT,
+    margin: { t: 48, r: 55, b: 45, l: 55 },
     xaxis: { title: "trade number" },
     yaxis: { title: "cumulative bps" },
-    legend: { orientation: "h", y: 1.08 },
-  }, config);
+    legend: { orientation: "h", y: 1.08, yanchor: "bottom", font: { size: 9 } },
+  }, PLOT_CFG);
   histogram("finalHist", mc.sim_final_pnls || [], "Final PnL", "bps", mc.real_pnl);
   histogram("sharpeHist", mc.sim_sharpes || [], "Sharpe", "ratio", mc.real_sharpe);
   histogram("ddHist", mc.sim_max_dds || [], "Max Drawdown", "bps", mc.real_max_dd);
@@ -214,12 +205,13 @@ function histogram(id, values, title, xTitle, marker) {
     shapes.push({ type: "line", xref: "x", yref: "paper", x0: marker, x1: marker, y0: 0, y1: 1, line: { color: "#3fb950", width: 2 } });
   }
   Plotly.react(id, traces, {
-    ...layoutBase,
+    ...PLOT_LAYOUT,
+    margin: { t: 44, r: 55, b: 45, l: 55 },
     title: { text: title },
     xaxis: { title: xTitle },
     yaxis: { title: "count" },
     shapes,
-  }, config);
+  }, PLOT_CFG);
 }
 
 function perTradePercentiles(curves) {

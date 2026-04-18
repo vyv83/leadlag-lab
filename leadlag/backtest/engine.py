@@ -480,6 +480,7 @@ def _simulate_trade(
         "mae_bps": mae_bps,
         "mfe_time_ms": mfe_time_ms,
         "mae_time_ms": mae_time_ms,
+        "entry_to_mfe_time_ms": mfe_time_ms,
         "bbo_spread_at_entry_bps": spread_entry,
         "bbo_spread_at_exit_bps": spread_exit,
         "bbo_available": bbo_available,
@@ -642,6 +643,8 @@ def _build_stats(
         "trades_per_hour": float(len(df) / (duration_ms / 3_600_000.0)),
         "max_consec_wins": _max_streak(net > 0),
         "max_consec_losses": _max_streak(net <= 0),
+        "consecutive_wins": _max_streak(net > 0),
+        "consecutive_losses": _max_streak(net <= 0),
         "avg_spread_at_entry_bps": _mean_or_none(df["spread_at_entry_bps"]),
         "avg_slippage_bps": float(df["slippage_total_bps"].mean()),
         "fee_impact": {
@@ -659,8 +662,9 @@ def _build_stats(
         "by_hour_utc": _by_hour_utc(df),
     }
     if "entry_type" in df.columns and (df["entry_type"] == "limit").any():
-        # Fill rate proxy: included limit trades / attempted (we only record filled; log attempts?)
-        stats["by_entry_type"].setdefault("limit", {})["avg_slippage_bps"] = 0.0
+        limit_group = stats["by_entry_type"].setdefault("limit", {})
+        limit_group["avg_slippage_bps"] = 0.0
+        limit_group["fill_rate"] = stats["limit_fill_rate"]
     return stats
 
 

@@ -6,8 +6,11 @@ This repository is a local lead-lag trading research application. The next agent
 
 1. User task in [plan.md](/root/projects/leadlag-lab/plan.md), especially `ЧАСТЬ 1: СИНТЕЗИРОВАННОЕ ЗАДАНИЕ ПОЛЬЗОВАТЕЛЯ`.
 2. Product/technical plan in [plan.md](/root/projects/leadlag-lab/plan.md).
-3. Main implementation plan in [FULL_REWORK_PLAN_TO_10.md](/root/projects/leadlag-lab/FULL_REWORK_PLAN_TO_10.md).
-4. Supplemental critique checklist in [CRITIQUE.md](/root/projects/leadlag-lab/CRITIQUE.md).
+3. Active pre-Flutter implementation plan in [05_PRE_FLUTTER_STABILIZATION_PLAN.md](/root/projects/leadlag-lab/05_PRE_FLUTTER_STABILIZATION_PLAN.md).
+4. Current iteration review in [03_NEXT_ITERATION_REVIEW_TO_10.md](/root/projects/leadlag-lab/03_NEXT_ITERATION_REVIEW_TO_10.md).
+5. Supplemental independent audit in [04_DEEP_AUDIT_REPORT.md](/root/projects/leadlag-lab/04_DEEP_AUDIT_REPORT.md).
+6. Historical full rework plan in [02_FULL_REWORK_PLAN_TO_10.md](/root/projects/leadlag-lab/02_FULL_REWORK_PLAN_TO_10.md).
+7. Legacy critique checklist in [91_LEGACY_CRITIQUE.md](/root/projects/leadlag-lab/91_LEGACY_CRITIQUE.md).
 
 If these documents conflict, the original user goal wins over the plan, and the plan wins over current implementation.
 
@@ -17,20 +20,23 @@ Start the new implementation dialog on `gpt-5.4` with reasoning `xhigh`.
 
 Mandatory stop rule:
 
-- Complete and verify Phase A and Phase B from [FULL_REWORK_PLAN_TO_10.md](/root/projects/leadlag-lab/FULL_REWORK_PLAN_TO_10.md).
+- Complete and verify the active pre-Flutter gate in [05_PRE_FLUTTER_STABILIZATION_PLAN.md](/root/projects/leadlag-lab/05_PRE_FLUTTER_STABILIZATION_PLAN.md).
 - Commit those changes.
-- Stop and tell the user: `Переключи новый диалог на gpt-5.4 high для оставшейся реализации`.
-- Do not switch earlier if core data contracts, session loading, Explorer, or Trade Inspector acceptance checks are still failing.
+- Stop and ask the user before starting the Flutter implementation from [06_FLUTTER_UI_REWORK_PLAN.md](/root/projects/leadlag-lab/06_FLUTTER_UI_REWORK_PLAN.md).
+- Do not start Flutter while core data/API contracts, analysis creation, collector truthfulness, Explorer filters, backtest correctness, or Monte Carlo honesty checks are still failing.
 
-Rationale: Phase A/B are the highest-risk phases because they define data contracts, backtest integration, session artifacts, event loading, and trader-facing inspection UX. Later work can usually be done safely on `high`.
+Rationale: the pre-Flutter gate is the highest-risk stage because it defines the stable API and truthfulness contract that the new Flutter UI will depend on.
 
 ## Required Reading Before Editing
 
 Before making code changes, read:
 
 - [plan.md](/root/projects/leadlag-lab/plan.md)
-- [FULL_REWORK_PLAN_TO_10.md](/root/projects/leadlag-lab/FULL_REWORK_PLAN_TO_10.md)
-- [CRITIQUE.md](/root/projects/leadlag-lab/CRITIQUE.md)
+- [00_DOCS_PIPELINE.md](/root/projects/leadlag-lab/00_DOCS_PIPELINE.md)
+- [05_PRE_FLUTTER_STABILIZATION_PLAN.md](/root/projects/leadlag-lab/05_PRE_FLUTTER_STABILIZATION_PLAN.md)
+- [03_NEXT_ITERATION_REVIEW_TO_10.md](/root/projects/leadlag-lab/03_NEXT_ITERATION_REVIEW_TO_10.md)
+- [04_DEEP_AUDIT_REPORT.md](/root/projects/leadlag-lab/04_DEEP_AUDIT_REPORT.md)
+- [02_FULL_REWORK_PLAN_TO_10.md](/root/projects/leadlag-lab/02_FULL_REWORK_PLAN_TO_10.md)
 - [README.md](/root/projects/leadlag-lab/README.md), if present
 - relevant current source files for the phase being implemented
 
@@ -38,14 +44,13 @@ Do not implement from memory. Check the actual code and current behavior.
 
 ## Implementation Order
 
-Use the phase order from `FULL_REWORK_PLAN_TO_10.md`:
+Use the active pre-Flutter order from `05_PRE_FLUTTER_STABILIZATION_PLAN.md`:
 
-- Phase A: core pipeline, session artifacts, `load_session`, backtest API path, tests.
-- Phase B: Explorer and Trade Inspector UX.
-- Phase C: Backtest and Monte Carlo.
-- Phase D: Collector, Quality, Dashboard.
-- Phase E: Jupyter strategy workflow.
-- Phase F: Paper/realtime closure.
+- S1: Analysis path.
+- S2: Demo baseline.
+- S3: Ops truth.
+- S4: Research truth.
+- S5: Paper honesty.
 
 Paper trading is part of the final 10/10 target because it exists in the original user task. Do not start with paper trading, but do not delete it from the final scope.
 
@@ -100,9 +105,9 @@ If Context7 is unavailable in a fresh session, continue from local code and offi
 - Do not revert user changes.
 - If unexpected unrelated changes appear, stop and ask the user how to proceed.
 
-## Phase Acceptance
+## Pre-Flutter Acceptance
 
-Use the acceptance checklist in [FULL_REWORK_PLAN_TO_10.md](/root/projects/leadlag-lab/FULL_REWORK_PLAN_TO_10.md) as the final gate.
+Use the acceptance checklist in [05_PRE_FLUTTER_STABILIZATION_PLAN.md](/root/projects/leadlag-lab/05_PRE_FLUTTER_STABILIZATION_PLAN.md) as the next gate before Flutter.
 
 Important early gates:
 
@@ -111,4 +116,3 @@ Important early gates:
 - Explorer can load all events without embedding all chart windows in the events table.
 - Clicking an event opens a trader-readable view with leader/follower price, BBO, spread, entry/exit, fees/slippage, MFE/MAE, and reason fields.
 - Backtest output contains inspectable trades, equity, stats, and Monte Carlo artifacts.
-

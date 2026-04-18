@@ -7,13 +7,17 @@
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>Explorer</h1>
+<header><h1>leadlag</h1>
 <nav>
   <a href="dashboard.html">Dashboard</a>
-  <a href="explorer.html">Explorer</a>
+  <a href="collector.html">Collector</a>
+  <a href="explorer.html" class="active">Explorer</a>
+  <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
   <a href="backtest.html">Backtests</a>
-  <a href="quality.html">Quality</a>
+  <a href="montecarlo.html">Monte Carlo</a>
+  <a href="paper.html">Paper</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
 </nav>
 </header>
 <main>
@@ -39,7 +43,7 @@
     </select></label>
     <label>Filter follower <select id="filterFollower"><option value="">All</option></select></label>
     <label>Chart follower <select id="chartFollower"></select></label>
-    <label>Min σ <input id="minMag" type="number" step="0.1" placeholder="0.0"></label>
+    <label>Min sigma <input id="minMag" type="number" step="0.1" placeholder="0.0"></label>
     <label>Min lagging <input id="minLagging" type="number" min="1" step="1" placeholder="1"></label>
     <label>UTC from <input id="timeFrom" type="time"></label>
     <label>to <input id="timeTo" type="time"></label>
@@ -65,7 +69,7 @@
 <section class="explorer-grid">
   <div class="event-panel">
     <table id="events"><thead><tr>
-      <th>#</th><th>Signal</th><th>Dir</th><th>σ</th><th>Time UTC</th><th>Lagging</th><th>Leader</th><th>Trade</th>
+      <th>#</th><th>Signal</th><th>Dir</th><th>sigma</th><th>Time UTC</th><th>Lagging</th><th>Leader</th><th>Trade</th>
     </tr></thead><tbody></tbody></table>
   </div>
   <div class="chart-panel">
@@ -187,14 +191,27 @@ function renderEventsTable() {
     const tradeLink = tradeDetail && Number(tradeDetail.trade.signal_bin_idx) === Number(e.bin_idx)
       ? linkTo(`trade.html?backtest=${btParam}&trade=${tradeParam}`, "trade")
       : "";
-    const dir = Number(e.direction) > 0 ? "UP" : "DOWN";
-    [i + 1, e.signal, dir, fmt(Number(e.magnitude_sigma), 2), utc(e.ts_ms),
-      e.n_lagging || (e.lagging_followers || []).length, e.anchor_leader || e.leader, tradeLink]
-      .forEach(c => {
-        const td = el("td");
-        if (c instanceof Node) td.appendChild(c); else td.textContent = c;
-        tr.appendChild(td);
-      });
+    const cells = [
+      { html: false, val: i + 1 },
+      { html: true,  val: sigBadge(e.signal) },
+      { html: true,  val: dirArrow(e.direction) },
+      { html: false, val: fmt(Number(e.magnitude_sigma), 2) },
+      { html: false, val: utc(e.ts_ms) },
+      { html: false, val: e.n_lagging || (e.lagging_followers || []).length },
+      { html: false, val: e.anchor_leader || e.leader },
+      { html: false, val: tradeLink },
+    ];
+    cells.forEach(c => {
+      const td = el("td");
+      if (c.html) {
+        td.innerHTML = c.val;
+      } else if (c.val instanceof Node) {
+        td.appendChild(c.val);
+      } else {
+        td.textContent = c.val;
+      }
+      tr.appendChild(td);
+    });
     tbody.appendChild(tr);
   });
 }
@@ -248,20 +265,16 @@ function renderChart() {
   addBboOverlay(traces, priceWindow, selectedDetail.bbo_window, rel, follower);
   addEventShapes(shapes, annotations, follower);
   const layout = {
-    paper_bgcolor: "#0e1117",
-    plot_bgcolor: "#0e1117",
-    font: { color: "#c9d1d9" },
-    margin: { t: 20, r: 70, b: 45, l: 55 },
+    ...PLOT_LAYOUT,
     hovermode: "x unified",
     xaxis: { title: "ms from event", zeroline: false },
-    yaxis: { title: "leader bps from t0", domain: [0.58, 1.0], zeroline: true },
-    yaxis2: { title: "follower bps from t0", domain: [0.0, 0.42], zeroline: true },
+    yaxis: { title: "leader bps", domain: [0.58, 1.0], zeroline: true, autorange: true },
+    yaxis2: { title: "follower bps", domain: [0.0, 0.42], zeroline: true, autorange: true },
     yaxis3: { title: "spread bps", overlaying: "y2", side: "right", showgrid: false },
-    legend: { orientation: "h", y: 1.08 },
     shapes,
     annotations,
   };
-  Plotly.react(chart, traces, layout, { responsive: true, displayModeBar: true });
+  Plotly.react(chart, traces, layout, PLOT_CFG).then(() => attachVisibleYFit(chart, traces));
 }
 
 function addFollowerTrace(traces, priceWindow, rel, venue, line) {
@@ -321,34 +334,49 @@ function renderFollowersTable() {
   const followers = meta.followers || [];
   const fees = selectedDetail.fees || meta.fees || {};
   const available = selectedDetail.bbo_available || meta.bbo_available || {};
-  fillTable("#followers", followers, venue => {
+  const tbody = document.querySelector("#followers tbody");
+  tbody.innerHTML = "";
+  followers.forEach(venue => {
     const m = (selectedEvent.follower_metrics || {})[venue] || {};
     const grid = (selectedEvent.grid_results || {})[venue] || {};
-    return [
-      linkTo("#", venue),
-      (selectedEvent.lagging_followers || []).includes(venue) ? "yes" : "no",
-      fmt(m.lag_50_ms, 0),
-      fmt(m.lag_80_ms, 0),
-      m.hit === 1 ? "yes" : m.hit === 0 ? "no" : "—",
-      fmt(m.mfe_bps),
-      fmt(m.mae_bps),
-      fmt((fees[venue] || {}).taker_bps),
-      fmt((fees[venue] || {}).maker_bps),
-      available[venue] ? "yes" : "N/A",
-      netAt(grid, "2000"),
-      netAt(grid, "5000"),
-      netAt(grid, "10000"),
-      netAt(grid, "30000"),
+    const isInSignal = (selectedEvent.lagging_followers || []).includes(venue);
+    const hitVal = m.hit === 1 ? true : m.hit === 0 ? false : null;
+    const bboAvail = available[venue];
+    const cells = [
+      { node: true,  val: linkTo("#", venue) },
+      { html: true,  val: checkMark(isInSignal) },
+      { html: false, val: fmt(m.lag_50_ms, 0) },
+      { html: false, val: fmt(m.lag_80_ms, 0) },
+      { html: true,  val: checkMark(hitVal) },
+      { html: false, val: fmt(m.mfe_bps) },
+      { html: false, val: fmt(m.mae_bps) },
+      { html: false, val: fmt((fees[venue] || {}).taker_bps) },
+      { html: false, val: fmt((fees[venue] || {}).maker_bps) },
+      { html: true,  val: naMark(bboAvail) },
+      { html: false, val: netAt(grid, "2000") },
+      { html: false, val: netAt(grid, "5000") },
+      { html: false, val: netAt(grid, "10000") },
+      { html: false, val: netAt(grid, "30000") },
     ];
-  });
-  document.querySelectorAll("#followers tbody tr").forEach((tr, i) => {
-    const venue = followers[i];
+    const tr = el("tr");
+    cells.forEach(c => {
+      const td = el("td");
+      if (c.node) {
+        td.appendChild(c.val);
+      } else if (c.html) {
+        td.innerHTML = c.val;
+      } else {
+        td.textContent = c.val == null ? "—" : String(c.val);
+      }
+      tr.appendChild(td);
+    });
     tr.classList.toggle("selected", venue === document.getElementById("chartFollower").value);
     tr.onclick = () => {
       document.getElementById("chartFollower").value = venue;
       renderChart();
       renderFollowersTable();
     };
+    tbody.appendChild(tr);
   });
 }
 

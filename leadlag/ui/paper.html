@@ -7,14 +7,17 @@
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>Paper Trading</h1>
+<header><h1>leadlag</h1>
 <nav>
   <a href="dashboard.html">Dashboard</a>
   <a href="collector.html">Collector</a>
   <a href="explorer.html">Explorer</a>
+  <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
   <a href="backtest.html">Backtests</a>
-  <a href="paper.html">Paper</a>
+  <a href="montecarlo.html">Monte Carlo</a>
+  <a href="paper.html" class="active">Paper</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
 </nav>
 </header>
 <main>
@@ -67,9 +70,6 @@
 </main>
 <script src="app.js"></script>
 <script>
-const plotBase = { paper_bgcolor:"#0e1117", plot_bgcolor:"#0e1117", font:{color:"#c9d1d9"}, margin:{t:20,l:55,r:20,b:40} };
-const plotCfg = { responsive:true, displayModeBar:true };
-
 async function loadStrategies() {
   const strategies = await fetchJSON("/api/strategies");
   const valid = strategies.filter(s => s.valid);
@@ -102,7 +102,7 @@ function renderStatus(st) {
     ["Status", st.blocked ? "blocked" : (st.running ? "running" : "stopped")],
     ["Strategy", st.strategy || "—"],
     ["Mode", st.mode || "live_ws"],
-    ["Can trade", st.can_trade ? "yes" : "no"],
+    ["Can trade", checkMark(st.can_trade)],
     ["Blocked reason", st.blocked_reason || "—"],
     ["Realtime signals", st.signal_c_supported ? "A/B/C" : "A only; Signal C parity is pending"],
     ["Started UTC", st.started_at_ms ? utc(st.started_at_ms) : "—"],
@@ -113,7 +113,7 @@ function renderStatus(st) {
   ]);
 }
 function renderVenues(rows) {
-  fillTable("#venues", rows, r => [r.venue, r.role, r.used_by_strategy ? "yes" : "no", r.status, r.bbo_available ? "yes" : "N/A", fmt(r.taker_fee_bps), fmt(r.maker_fee_bps)]);
+  fillTable("#venues", rows, r => [r.venue, r.role, checkMark(r.used_by_strategy), r.status, naMark(r.bbo_available), fmt(r.taker_fee_bps), fmt(r.maker_fee_bps)]);
 }
 function renderEquity(rows) {
   if (!rows.length) {
@@ -121,11 +121,14 @@ function renderEquity(rows) {
     return;
   }
   Plotly.react("equityChart", [{x:rows.map(r=>new Date(Number(r.ts_ms))), y:rows.map(r=>r.cumulative_pnl_bps), mode:"lines+markers", name:"paper"}], {
-    ...plotBase, xaxis:{title:"UTC"}, yaxis:{title:"cumulative bps"},
-  }, plotCfg);
+    ...PLOT_LAYOUT,
+    margin: { t: 36, l: 55, r: 20, b: 40 },
+    xaxis: { title: "UTC" },
+    yaxis: { title: "cumulative bps" },
+  }, PLOT_CFG);
 }
 function renderSignals(rows) {
-  fillTable("#signals", rows, r => [utc(r.ts_ms), r.signal_type, Number(r.direction) > 0 ? "UP" : "DOWN", fmt(r.magnitude), r.action, r.skip_reason || r.error || "—", r.spread_at_signal_bps === null ? "N/A" : fmt(r.spread_at_signal_bps)]);
+  fillTable("#signals", rows, r => [utc(r.ts_ms), sigBadge(r.signal_type), `${dirArrow(r.direction)} ${Number(r.direction) > 0 ? "UP" : "DOWN"}`, fmt(r.magnitude), r.action, r.skip_reason || r.error || "—", r.spread_at_signal_bps === null ? "N/A" : fmt(r.spread_at_signal_bps)]);
 }
 function renderPositions(rows) {
   fillTable("#positions", rows, r => [r.trade_id, r.venue, r.side, fmt(r.entry_price_exec, 4), fmt(r.mfe_bps), fmt(r.mae_bps), utc(Number(r.entry_ts_ms || 0) + Number(r.hold_ms || 0))]);
@@ -142,19 +145,6 @@ function renderStats(s) {
     ["Fees", `${fmt(s.total_fees_bps)} bps`],
     ["Slippage", `${fmt(s.total_slippage_bps)} bps`],
   ]);
-}
-function fillCards(id, rows) {
-  const box = document.getElementById(id);
-  box.innerHTML = "";
-  rows.forEach(([label, value]) => box.appendChild(el("div", {class:"metric-card"}, [
-    el("div", {class:"metric-label"}, [label]),
-    el("div", {class:"metric-value"}, [String(value)]),
-  ])));
-}
-function seconds(s) {
-  s = Number(s || 0);
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
-  return h ? `${h}h ${m}m` : `${m}m ${sec}s`;
 }
 
 document.getElementById("start").onclick = async () => {

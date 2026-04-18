@@ -7,12 +7,17 @@
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>Trade Inspector</h1>
+<header><h1>leadlag</h1>
 <nav>
   <a href="dashboard.html">Dashboard</a>
+  <a href="collector.html">Collector</a>
   <a href="explorer.html">Explorer</a>
+  <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
-  <a href="backtest.html">Backtests</a>
+  <a href="backtest.html" class="active">Backtests</a>
+  <a href="montecarlo.html">Monte Carlo</a>
+  <a href="paper.html">Paper</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
 </nav>
 </header>
 <main>
@@ -81,18 +86,19 @@ function setNav(id, targetTradeId) {
 function renderHeader() {
   const trade = payload.trade;
   const meta = payload.meta || {};
-  const direction = Number(trade.direction) > 0 ? "UP" : "DOWN";
   document.getElementById("title").textContent =
     `Trade #${trade.trade_id} of ${payload.total_trades} - ${meta.strategy_name || "strategy"} - ${trade.venue}`;
   document.getElementById("summary").innerHTML = "";
   [
-    ["Signal", trade.signal_type],
-    ["Direction", direction],
+    ["Signal", sigBadge(trade.signal_type)],
+    ["Direction", `${dirArrow(trade.direction)} ${Number(trade.direction) > 0 ? "UP" : "DOWN"}`],
     ["Magnitude", `${fmt(Number(trade.magnitude_sigma), 2)}σ`],
     ["Result", `${signed(Number(trade.net_pnl_bps), 2)} bps`],
     ["Exit", trade.exit_reason],
   ].forEach(([k, v]) => {
-    document.getElementById("summary").appendChild(el("div", { class: "pill" }, [`${k}: ${v}`]));
+    const pill = el("div", { class: "pill" }, [`${k}: `]);
+    pill.appendChild(setValueContent(el("span"), v));
+    document.getElementById("summary").appendChild(pill);
   });
 }
 
@@ -119,7 +125,7 @@ function renderMetrics() {
     ["MAE", excursionText(t.mae_bps, t.mae_time_ms)],
     ["Spread entry", t.spread_at_entry_bps === null ? "N/A" : `${fmt(t.spread_at_entry_bps)} bps`],
     ["Spread exit", t.spread_at_exit_bps === null ? "N/A" : `${fmt(t.spread_at_exit_bps)} bps`],
-    ["BBO available", t.bbo_available ? "yes" : "no"],
+    ["BBO available", naMark(t.bbo_available)],
     ["N lagging", fmt(t.n_lagging_at_signal, 0)],
     ["Leader dev", fmt(t.leader_dev_sigma)],
   ];
@@ -127,7 +133,7 @@ function renderMetrics() {
   kv.innerHTML = "";
   rows.forEach(([k, v]) => {
     kv.appendChild(el("div", { class: "k" }, [k]));
-    kv.appendChild(el("div", {}, [String(v)]));
+    kv.appendChild(setValueContent(el("div"), v));
   });
 }
 
@@ -175,20 +181,19 @@ function renderChart() {
   if (event.signal === "C" && event.confirmer_lag_ms !== null && event.confirmer_lag_ms !== undefined) {
     annotations.push(label(Number(event.confirmer_lag_ms), `confirmer lag ${event.confirmer_lag_ms}ms`));
   }
-  Plotly.react("tradeChart", traces, {
-    paper_bgcolor: "#0e1117",
-    plot_bgcolor: "#0e1117",
-    font: { color: "#c9d1d9" },
-    margin: { t: 20, r: 75, b: 45, l: 55 },
+  const chart = document.getElementById("tradeChart");
+  Plotly.react(chart, traces, {
+    ...PLOT_LAYOUT,
+    margin: { t: 48, r: 75, b: 45, l: 55 },
     hovermode: "x unified",
     xaxis: { title: "ms from event" },
-    yaxis: { title: "leader bps from t0", domain: [0.58, 1.0], zeroline: true },
-    yaxis2: { title: "follower bps from t0", domain: [0.0, 0.42], zeroline: true },
+    yaxis: { title: "leader bps from t0", domain: [0.58, 1.0], zeroline: true, autorange: true },
+    yaxis2: { title: "follower bps from t0", domain: [0.0, 0.42], zeroline: true, autorange: true },
     yaxis3: { title: "spread bps", overlaying: "y2", side: "right", showgrid: false },
-    legend: { orientation: "h", y: 1.08 },
+    legend: { orientation: "h", y: 1.08, yanchor: "bottom", font: { size: 9 } },
     shapes,
     annotations,
-  }, { responsive: true, displayModeBar: true });
+  }, PLOT_CFG).then(() => attachVisibleYFit(chart, traces));
 }
 
 function addTrace(traces, priceWindow, rel, venue, yaxis, line) {

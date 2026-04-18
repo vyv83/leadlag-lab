@@ -28,6 +28,8 @@ async function postJSON(url, body) {
   }
   return r.json();
 }
+
+/* ── Shared helpers ── */
 function qs(k) { return new URLSearchParams(location.search).get(k); }
 function setQS(params) {
   const u = new URL(location.href);
@@ -75,7 +77,7 @@ function fillTable(sel, rows, rowFn) {
     for (const c of rowFn(r)) {
       const td = el("td");
       if (c instanceof Node) td.appendChild(c);
-      else td.textContent = c == null ? "—" : String(c);
+      else setValueContent(td, c == null ? "—" : c);
       tr.appendChild(td);
     }
     tbody.appendChild(tr);
@@ -98,4 +100,131 @@ function firstNumber(values) {
     if (v !== null && v !== undefined && Number.isFinite(Number(v))) return Number(v);
   }
   return null;
+}
+
+/* ── Shared Plotly config ── */
+const PLOT_LAYOUT = {
+  paper_bgcolor: "#0e1117",
+  plot_bgcolor: "#0e1117",
+  font: { color: "#c9d1d9", size: 10 },
+  margin: { t: 48, r: 50, b: 36, l: 50 },
+  dragmode: "pan",
+  title: { font: { size: 12 } },
+  legend: {
+    orientation: "h",
+    y: 1.02,
+    yanchor: "bottom",
+    font: { size: 9 },
+  },
+};
+const PLOT_CFG = {
+  responsive: true,
+  displayModeBar: "hover",
+  displaylogo: false,
+  modeBarButtons: [["zoomIn2d", "zoomOut2d", "resetScale2d"]],
+};
+
+function fillCards(id, rows) {
+  const box = document.getElementById(id);
+  box.innerHTML = "";
+  rows.forEach(([label, value]) => {
+    const card = el("div", { class: "metric-card" }, [
+      el("div", { class: "metric-label" }, [label]),
+    ]);
+    card.appendChild(setValueContent(el("div", { class: "metric-value" }), value));
+    box.appendChild(card);
+  });
+}
+function seconds(s) {
+  s = Number(s || 0);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return h ? `${h}h ${m}m` : `${m}m ${sec}s`;
+}
+function humanBytes(x) {
+  x = Number(x || 0);
+  if (x >= 1e9) return `${fmt(x / 1e9, 2)} GB`;
+  if (x >= 1e6) return `${fmt(x / 1e6, 2)} MB`;
+  if (x >= 1e3) return `${fmt(x / 1e3, 2)} KB`;
+  return `${fmt(x, 0)} B`;
+}
+
+/* ── Signal badge helper ── */
+function sigBadge(signal) {
+  const s = { A: "sig-a", B: "sig-b", C: "sig-c" }[signal];
+  return s ? `<span class="sig ${s}">${signal}</span>` : signal;
+}
+function dirArrow(direction) {
+  return Number(direction) > 0
+    ? '<span class="dir-up">▲</span>'
+    : '<span class="dir-down">▼</span>';
+}
+function checkMark(v) { return v ? '<span class="ok">✓</span>' : '<span class="no">✗</span>'; }
+function naMark(v) { return v ? '<span class="ok">✓</span>' : '<span class="na">—</span>'; }
+function setValueContent(node, value) {
+  if (typeof value === "string" && /^<span class="(ok|no|na|sig|dir-)/.test(value)) {
+    node.innerHTML = value;
+  } else {
+    node.textContent = String(value);
+  }
+  return node;
+}
+
+function attachVisibleYFit(chart, traces, axisKeys = ["yaxis", "yaxis2"]) {
+  if (!chart || typeof chart.on !== "function") return;
+  chart.removeAllListeners && chart.removeAllListeners("plotly_relayout");
+  chart.on("plotly_relayout", () => fitVisibleY(chart, traces, axisKeys));
+  setTimeout(() => fitVisibleY(chart, traces, axisKeys), 0);
+}
+
+function fitVisibleY(chart, traces, axisKeys) {
+  if (chart._fittingVisibleY) return;
+  const range = chart && chart._fullLayout && chart._fullLayout.xaxis && chart._fullLayout.xaxis.range;
+  if (!range || range.length < 2) return;
+  const a = plotXNumber(range[0]);
+  const b = plotXNumber(range[1]);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return;
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  const update = {};
+  axisKeys.forEach(axisKey => {
+    const values = visibleYValues(traces, axisKey, lo, hi);
+    if (!values.length) return;
+    let ymin = Math.min(...values);
+    let ymax = Math.max(...values);
+    const span = ymax - ymin;
+    const pad = span > 0 ? span * 0.08 : Math.max(Math.abs(ymin) * 0.02, 1);
+    update[`${axisKey}.range`] = [ymin - pad, ymax + pad];
+    update[`${axisKey}.autorange`] = false;
+  });
+  if (Object.keys(update).length) {
+    chart._fittingVisibleY = true;
+    Plotly.relayout(chart, update).finally(() => { chart._fittingVisibleY = false; });
+  }
+}
+
+function visibleYValues(traces, axisKey, lo, hi) {
+  const values = [];
+  traces.forEach(trace => {
+    if (trace.visible === false || traceAxisKey(trace) !== axisKey) return;
+    (trace.x || []).forEach((x, i) => {
+      const xv = plotXNumber(x);
+      const yv = Number((trace.y || [])[i]);
+      if (Number.isFinite(xv) && xv >= lo && xv <= hi && Number.isFinite(yv)) values.push(yv);
+    });
+  });
+  return values;
+}
+
+function traceAxisKey(trace) {
+  const axis = trace.yaxis || "y";
+  return axis === "y" ? "yaxis" : `yaxis${axis.slice(1)}`;
+}
+
+function plotXNumber(x) {
+  if (x instanceof Date) return x.getTime();
+  if (typeof x === "number") return x;
+  const n = Number(x);
+  if (Number.isFinite(n)) return n;
+  const d = Date.parse(x);
+  return Number.isFinite(d) ? d : NaN;
 }

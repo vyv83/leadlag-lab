@@ -7,13 +7,17 @@
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>Backtest</h1>
+<header><h1>leadlag</h1>
 <nav>
   <a href="dashboard.html">Dashboard</a>
+  <a href="collector.html">Collector</a>
   <a href="explorer.html">Explorer</a>
+  <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
-  <a href="backtest.html">Backtests</a>
+  <a href="backtest.html" class="active">Backtests</a>
   <a href="montecarlo.html">Monte Carlo</a>
+  <a href="paper.html">Paper</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
 </nav>
 </header>
 <main>
@@ -37,7 +41,20 @@
   <div class="kv" id="meta"></div>
 </section>
 
-<section id="kpis" class="cards" hidden></section>
+<section id="kpis" class="kpi-groups" hidden>
+  <div class="section-group kpi-group">
+    <h3>PnL</h3>
+    <div class="cards" id="pnlCards"></div>
+  </div>
+  <div class="section-group kpi-group">
+    <h3>Risk</h3>
+    <div class="cards" id="riskCards"></div>
+  </div>
+  <div class="section-group kpi-group">
+    <h3>Execution</h3>
+    <div class="cards" id="execCards"></div>
+  </div>
+</section>
 
 <section id="detailCharts" hidden>
   <h2>Equity</h2>
@@ -45,6 +62,7 @@
     <span>Layers</span>
     <label><input class="layerToggle" value="gross" type="checkbox" checked> Gross</label>
     <label><input class="layerToggle" value="post_fee" type="checkbox" checked> Gross - Fees</label>
+    <label><input class="layerToggle" value="slippage" type="checkbox" checked> -Slippage</label>
     <label><input class="layerToggle" value="net" type="checkbox" checked> Net</label>
   </div>
   <div class="chart tall" id="equityChart"></div>
@@ -75,6 +93,14 @@
     <div>
       <h3>By Signal</h3>
       <table id="bySignal"><thead><tr><th>signal</th><th>n</th><th>avg net</th><th>win</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div>
+      <h3>By Entry Type</h3>
+      <table id="byEntryType"><thead><tr><th>type</th><th>n</th><th>avg fee</th><th>avg slip</th><th>fill rate</th><th>win</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div>
+      <h3>By Exit Reason</h3>
+      <table id="byExitReason"><thead><tr><th>reason</th><th>n</th><th>avg net</th><th>win</th></tr></thead><tbody></tbody></table>
     </div>
   </div>
 </section>
@@ -108,14 +134,6 @@ let stats = {};
 let equity = [];
 let trades = [];
 let filteredTrades = [];
-
-const plotLayout = {
-  paper_bgcolor: "#0e1117",
-  plot_bgcolor: "#0e1117",
-  font: { color: "#c9d1d9" },
-  margin: { t: 26, r: 55, b: 45, l: 55 },
-};
-const plotConfig = { responsive: true, displayModeBar: true };
 
 async function init() {
   if (!btId) return showList();
@@ -180,31 +198,40 @@ function renderHeader() {
     ["params override", JSON.stringify(meta.params_override || {})],
   ].forEach(([k, v]) => {
     kv.appendChild(el("div", { class: "k" }, [k]));
-    kv.appendChild(el("div", {}, [String(v ?? "—")]));
+    kv.appendChild(el("div", {}, [String(v ?? "\u2014")]));
   });
 }
 
 function renderCards() {
-  const cards = [
+  fillCards("pnlCards", [
     ["Total Net", `${signed(Number(stats.total_net_pnl_bps || 0))} bps`],
-    ["Trades", stats.n_trades || 0],
-    ["Win Rate", pct(stats.win_rate)],
-    ["Profit Factor", fmt(stats.profit_factor)],
-    ["Sharpe", fmt(stats.sharpe)],
-    ["Max DD", `${fmt(stats.max_drawdown_bps)} bps`],
     ["Avg Trade", `${signed(Number(stats.avg_trade_bps || 0))} bps`],
+    ["Profit Factor", fmt(stats.profit_factor)],
     ["Fees", `${fmt(stats.total_fees_bps)} bps`],
     ["Slippage", `${fmt(stats.total_slippage_bps)} bps`],
-    ["Avg Spread", `${fmt(stats.avg_spread_at_entry_bps)} bps`],
+    ["Avg Win", `${signed(Number(stats.avg_win_bps || 0))} bps`],
+    ["Avg Loss", `${signed(Number(stats.avg_loss_bps || 0))} bps`],
+    ["Best Trade", `${signed(Number(stats.best_trade_bps || 0))} bps`],
+    ["Worst Trade", `${signed(Number(stats.worst_trade_bps || 0))} bps`],
+    ["Fee % of Gross", stats.fee_pct_of_gross != null ? fmt(stats.fee_pct_of_gross) + "%" : "—"],
+    ["Slippage % of Gross", stats.slippage_pct_of_gross != null ? fmt(stats.slippage_pct_of_gross) + "%" : "—"],
+  ]);
+  fillCards("riskCards", [
+    ["Sharpe", fmt(stats.sharpe)],
+    ["Max DD", `${fmt(stats.max_drawdown_bps)} bps`],
+    ["Max DD Duration", stats.max_dd_duration_ms != null ? seconds(stats.max_dd_duration_ms / 1000) : "—"],
     ["Avg MFE", `${fmt(stats.avg_mfe_bps)} bps`],
     ["Avg MAE", `${fmt(stats.avg_mae_bps)} bps`],
-  ];
-  const box = document.getElementById("kpis");
-  box.innerHTML = "";
-  cards.forEach(([label, value]) => box.appendChild(el("div", { class: "metric-card" }, [
-    el("div", { class: "metric-label" }, [label]),
-    el("div", { class: "metric-value" }, [String(value)]),
-  ])));
+    ["MFE/MAE Ratio", stats.mfe_mae_ratio != null ? fmt(stats.mfe_mae_ratio) : "—"],
+    ["Consec Wins", stats.consecutive_wins != null ? stats.consecutive_wins : "—"],
+    ["Consec Losses", stats.consecutive_losses != null ? stats.consecutive_losses : "—"],
+  ]);
+  fillCards("execCards", [
+    ["Trades", stats.n_trades || 0],
+    ["Win Rate", pct(stats.win_rate)],
+    ["Avg Spread", `${fmt(stats.avg_spread_at_entry_bps)} bps`],
+    ["Trades/Hour", stats.trades_per_hour != null ? fmt(stats.trades_per_hour) : "—"],
+  ]);
 }
 
 function renderEquity() {
@@ -213,18 +240,26 @@ function renderEquity() {
   const traces = [];
   if (on("gross")) traces.push({ x: xs, y: equity.map(r => r.gross_equity_bps), name: "Gross", mode: "lines", yaxis: "y" });
   if (on("post_fee")) traces.push({ x: xs, y: equity.map(r => r.post_fee_equity_bps), name: "Gross - Fees", mode: "lines", yaxis: "y" });
+  if (on("slippage")) {
+    traces.push({ x: xs, y: equity.map(r => r.post_fee_equity_bps), name: "Slippage upper", mode: "none", yaxis: "y", showlegend: false, hoverinfo: "skip" });
+    traces.push({ x: xs, y: equity.map(r => r.net_equity_bps), name: "Slippage impact", mode: "lines", fill: "tonexty", fillcolor: "rgba(248,81,73,0.15)", line: { color: "rgba(248,81,73,0.4)", width: 1 }, yaxis: "y", showlegend: true });
+  }
   if (on("net")) traces.push({ x: xs, y: equity.map(r => r.net_equity_bps), name: "Net", mode: "lines+markers", yaxis: "y",
-    customdata: equity.map(r => r.trade_id), marker: { size: 7, color: equity.map(r => tradeById(r.trade_id)?.net_pnl_bps >= 0 ? "#3fb950" : "#f85149") } });
+    customdata: equity.map(r => r.trade_id),
+    marker: {
+      size: trades.map(t => 3 + Math.abs(Number(t.magnitude_sigma || 0)) * 2),
+      color: equity.map(r => tradeById(r.trade_id)?.net_pnl_bps >= 0 ? "#3fb950" : "#f85149")
+    } });
   traces.push({ x: xs, y: equity.map(r => r.drawdown_bps), name: "Drawdown", mode: "lines", fill: "tozeroy", yaxis: "y2", line: { color: "#f85149" } });
   const layout = {
-    ...plotLayout,
+    ...PLOT_LAYOUT,
     hovermode: "x unified",
     xaxis: { title: "UTC" },
     yaxis: { title: "cumulative bps", domain: [0.32, 1.0] },
     yaxis2: { title: "drawdown bps", domain: [0.0, 0.22] },
-    legend: { orientation: "h", y: 1.08 },
+    legend: { orientation: "h", y: 1.08, yanchor: "bottom", font: { size: 9 } },
   };
-  Plotly.react("equityChart", traces, layout, plotConfig);
+  Plotly.react("equityChart", traces, layout, PLOT_CFG);
   document.getElementById("equityChart").on("plotly_click", ev => {
     const tid = ev.points && ev.points[0] && ev.points[0].customdata;
     if (tid !== undefined && tid !== null) location.href = `trade.html?backtest=${btId}&trade=${tid}`;
@@ -233,20 +268,26 @@ function renderEquity() {
 
 function renderDistributions() {
   Plotly.react("pnlHist", [{ x: trades.map(t => t.net_pnl_bps), type: "histogram", name: "Net PnL" }], {
-    ...plotLayout, title: { text: "PnL per trade" }, xaxis: { title: "net bps" }, yaxis: { title: "count" },
-  }, plotConfig);
+    ...PLOT_LAYOUT, title: { text: "PnL per trade" }, xaxis: { title: "net bps" }, yaxis: { title: "count" },
+  }, PLOT_CFG);
   Plotly.react("holdHist", [{ x: trades.map(t => t.hold_ms), type: "histogram", name: "Hold" }], {
-    ...plotLayout, title: { text: "Hold times" }, xaxis: { title: "ms" }, yaxis: { title: "count" },
-  }, plotConfig);
+    ...PLOT_LAYOUT, title: { text: "Hold times" }, xaxis: { title: "ms" }, yaxis: { title: "count" },
+  }, PLOT_CFG);
   scatter("magnitudeScatter", trades.map(t => t.magnitude_sigma), trades.map(t => t.net_pnl_bps), "Magnitude vs PnL", "sigma", "net bps");
   scatter("timeScatter", trades.map(t => new Date(Number(t.entry_ts_ms)).getUTCHours() + new Date(Number(t.entry_ts_ms)).getUTCMinutes() / 60), trades.map(t => t.net_pnl_bps), "Time of day vs PnL", "UTC hour", "net bps");
   scatter("spreadScatter", trades.map(t => t.spread_at_entry_bps), trades.map(t => t.net_pnl_bps), "Spread at entry vs PnL", "spread bps", "net bps");
 }
 
 function scatter(id, x, y, title, xt, yt) {
-  Plotly.react(id, [{ x, y, type: "scatter", mode: "markers", marker: { color: y.map(v => Number(v) >= 0 ? "#3fb950" : "#f85149"), size: 7 }, customdata: trades.map(t => t.trade_id) }], {
-    ...plotLayout, title: { text: title }, xaxis: { title: xt }, yaxis: { title: yt },
-  }, plotConfig);
+  Plotly.react(id, [{ x, y, type: "scatter", mode: "markers",
+    marker: {
+      color: y.map(v => Number(v) >= 0 ? "#3fb950" : "#f85149"),
+      size: trades.map(t => 3 + Math.abs(Number(t.magnitude_sigma || 0)) * 2)
+    },
+    customdata: trades.map(t => t.trade_id)
+  }], {
+    ...PLOT_LAYOUT, title: { text: title }, xaxis: { title: xt }, yaxis: { title: yt },
+  }, PLOT_CFG);
   document.getElementById(id).on("plotly_click", ev => {
     const tid = ev.points && ev.points[0] && ev.points[0].customdata;
     if (tid !== undefined && tid !== null) location.href = `trade.html?backtest=${btId}&trade=${tid}`;
@@ -264,6 +305,8 @@ function renderBreakdowns() {
   fillGroupTable("#spreadBuckets", stats.by_spread_bucket || {});
   fillRichGroupTable("#byVenue", stats.by_venue || {});
   fillGroupTable("#bySignal", stats.by_signal || {});
+  fillEntryTypeTable("#byEntryType", stats.by_entry_type || {});
+  fillExitReasonTable("#byExitReason", stats.by_exit_reason || {});
 }
 
 function fillGroupTable(sel, obj) {
@@ -273,6 +316,14 @@ function fillGroupTable(sel, obj) {
 function fillRichGroupTable(sel, obj) {
   const rows = Object.entries(obj).map(([k, v]) => ({ key: k, ...v }));
   fillTable(sel, rows, r => [r.key, r.n, fmt(r.avg_pnl_bps), fmt(r.avg_fee_bps), fmt(r.avg_slippage_bps), pct(r.win_rate)]);
+}
+function fillEntryTypeTable(sel, obj) {
+  const rows = Object.entries(obj).map(([k, v]) => ({ key: k, ...v }));
+  fillTable(sel, rows, r => [r.key, r.n, fmt(r.avg_fee_bps), fmt(r.avg_slippage_bps), pct(r.fill_rate), pct(r.win_rate)]);
+}
+function fillExitReasonTable(sel, obj) {
+  const rows = Object.entries(obj).map(([k, v]) => ({ key: k, ...v }));
+  fillTable(sel, rows, r => [r.key, r.n, fmt(r.avg_net_pnl_bps), pct(r.win_rate)]);
 }
 
 function setupTradeFilters() {
@@ -310,31 +361,35 @@ function applyTradeFilters() {
 
 function renderTradesTable() {
   document.getElementById("tradeSummary").textContent = `Showing ${filteredTrades.length} of ${trades.length} trades`;
-  fillTable("#trades", filteredTrades, t => [
-    linkTo(`trade.html?backtest=${btId}&trade=${t.trade_id}`, "Inspect"),
-    linkTo(`explorer.html?session=${meta.session_id}&event=${t.signal_bin_idx}&mode=trade&backtest=${btId}&trade=${t.trade_id}`, "View Event"),
-    t.trade_id,
-    utc(t.entry_ts_ms),
-    t.signal_type,
-    Number(t.direction) > 0 ? "UP" : "DOWN",
-    fmt(t.magnitude_sigma),
-    t.venue,
-    fmt(t.entry_price_vwap, 4),
-    fmt(t.entry_price_exec, 4),
-    fmt(t.exit_price_vwap, 4),
-    fmt(t.exit_price_exec, 4),
-    t.exit_reason,
-    signed(Number(t.gross_pnl_bps)),
-    `${fmt(t.fee_total_bps)} (${t.fee_type_entry || t.fee_type}/${t.fee_type_exit || "taker"})`,
-    `${fmt(t.slippage_total_bps)} (${t.slippage_source_entry || t.slippage_source})`,
-    signed(Number(t.net_pnl_bps)),
-    t.spread_at_entry_bps === null ? "N/A" : fmt(t.spread_at_entry_bps),
-    t.spread_at_exit_bps === null ? "N/A" : fmt(t.spread_at_exit_bps),
-    fmt(t.hold_ms, 0),
-    fmt(t.mfe_bps),
-    fmt(t.mae_bps),
-    Number(t.net_pnl_bps) > 0 ? "yes" : "no",
-  ]);
+  fillTable("#trades", filteredTrades, t => {
+    const sigTd = el("td");
+    sigTd.innerHTML = sigBadge(t.signal_type);
+    return [
+      linkTo(`trade.html?backtest=${btId}&trade=${t.trade_id}`, "Inspect"),
+      linkTo(`explorer.html?session=${meta.session_id}&event=${t.signal_bin_idx}&mode=trade&backtest=${btId}&trade=${t.trade_id}`, "View Event"),
+      t.trade_id,
+      utc(t.entry_ts_ms),
+      sigTd,
+      Number(t.direction) > 0 ? "UP" : "DOWN",
+      fmt(t.magnitude_sigma),
+      t.venue,
+      fmt(t.entry_price_vwap, 4),
+      fmt(t.entry_price_exec, 4),
+      fmt(t.exit_price_vwap, 4),
+      fmt(t.exit_price_exec, 4),
+      t.exit_reason,
+      signed(Number(t.gross_pnl_bps)),
+      `${fmt(t.fee_total_bps)} (${t.fee_type_entry || t.fee_type}/${t.fee_type_exit || "taker"})`,
+      `${fmt(t.slippage_total_bps)} (${t.slippage_source_entry || t.slippage_source})`,
+      signed(Number(t.net_pnl_bps)),
+      t.spread_at_entry_bps === null ? "N/A" : fmt(t.spread_at_entry_bps),
+      t.spread_at_exit_bps === null ? "N/A" : fmt(t.spread_at_exit_bps),
+      fmt(t.hold_ms, 0),
+      fmt(t.mfe_bps),
+      fmt(t.mae_bps),
+      Number(t.net_pnl_bps) > 0 ? "yes" : "no",
+    ];
+  });
   document.querySelectorAll("#trades tbody tr").forEach((tr, i) => {
     tr.classList.toggle("profit-row", Number(filteredTrades[i].net_pnl_bps) >= 0);
     tr.classList.toggle("loss-row", Number(filteredTrades[i].net_pnl_bps) < 0);
