@@ -58,6 +58,65 @@ def save_strategy_source(source: str, path: str | Path) -> Path:
     return path
 
 
+def export_strategy(cls, path: str | Path) -> Path:
+    """Export a Strategy subclass defined in a notebook to a .py file.
+
+    Searches IPython's input history for the cell where ``cls`` was defined
+    and writes the full cell content (imports + class + helpers) as a
+    standalone ``.py`` file loadable by ``load_strategy()``.
+
+    Falls back to ``inspect.getsource()`` when not running inside Jupyter.
+
+    Usage (in a notebook cell)::
+
+        export_strategy(MyStrategy, '../data/strategies/my_strategy.py')
+    """
+    path = Path(path)
+    source = _extract_strategy_source(cls)
+    compile(source, str(path), "exec")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source)
+    load_strategy(path)
+    return path
+
+
+def _extract_strategy_source(cls) -> str:
+    """Get the full source of the cell defining *cls*."""
+    class_name = cls.__name__
+
+    # --- try IPython input history first (works in Jupyter) ------------------
+    try:
+        ip = __builtins__["get_ipython"]() if isinstance(__builtins__, dict) else getattr(__builtins__, "get_ipython", None)
+        if ip is None:
+            raise NameError
+    except (NameError, KeyError, TypeError):
+        ip = None
+
+    if ip is None:
+        try:
+            # maybe get_ipython is in caller's globals (Jupyter injects it)
+            import builtins
+            ip = getattr(builtins, "get_ipython", lambda: None)()
+        except Exception:
+            ip = None
+
+    if ip is not None:
+        history = ip.user_ns.get("In") or []
+        # walk backwards to find the most recent cell defining this class
+        for cell_source in reversed(list(history)):
+            if not isinstance(cell_source, str):
+                continue
+            if f"class {class_name}" in cell_source and "Strategy" in cell_source:
+                return cell_source.rstrip() + "\n"
+
+    # --- fallback: inspect.getsource (works for file-backed classes) ---------
+    source = inspect.getsource(cls)
+    # getsource returns only the class; prepend detected imports
+    leadlag_names = [n for n in ("Strategy", "Order", "Event", "Context", "BboSnapshot") if n in source]
+    header = f"from leadlag import {', '.join(leadlag_names)}\n\n\n" if leadlag_names else ""
+    return header + source.rstrip() + "\n"
+
+
 def list_strategies(directory: str | Path = "data/strategies") -> list[dict]:
     root = Path(directory)
     if not root.is_dir():

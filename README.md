@@ -2,7 +2,7 @@
 
 Local lead-lag crypto trading platform — collector, batch analysis, backtest, paper trading, FastAPI UI. Python package + 8 HTML screens served by a single uvicorn process on `:8899`.
 
-Full technical spec in [plan.md](plan.md); running implementation log in [PROGRESS.md](PROGRESS.md).
+Full technical spec in [plan.md](plan.md); documentation order in [00_DOCS_PIPELINE.md](00_DOCS_PIPELINE.md); running implementation log in [90_PROGRESS_LOG.md](90_PROGRESS_LOG.md).
 
 ## Layout
 
@@ -10,14 +10,31 @@ Full technical spec in [plan.md](plan.md); running implementation log in [PROGRE
 leadlag-lab/
 ├── leadlag/                package (venues, collector, analysis, session,
 │                           strategy, backtest, realtime, paper, monitor, api, ui)
-├── config/venues.yaml      12-venue registry
+├── config/
+│   ├── venues.yaml         12-venue registry
+│   ├── jupyter.env         Jupyter token + port (git-ignored, создаётся setup_jupyter.sh)
+│   └── jupyter.env.example шаблон для jupyter.env
 ├── data/                   runtime data (ticks/, bbo/, sessions/, strategies/,
-│                           backtest/, paper/, .system_history.jsonl, ...)
-├── deploy/                 systemd units + nginx snippet
+│                           backtest/, paper/, jupyter_home/, .system_history.jsonl, ...)
+├── deploy/                 systemd units + nginx snippets
+│   ├── leadlag-lab.service
+│   ├── leadlag-monitor.service
+│   ├── leadlag-lab-jupyter.service
+│   ├── nginx-leadlag-lab.conf
+│   └── nginx-leadlag-lab-jupyter.conf
+├── scripts/
+│   ├── setup_jupyter.sh    первоначальная настройка JupyterLab
+│   └── smoke_jupyter.sh    smoke-тест сервиса
+├── notebooks/              Jupyter notebooks
 ├── index.html              VYV-dashboard gateway (redirects to /leadlag-lab/)
 ├── pyproject.toml
+├── 00_DOCS_PIPELINE.md     ordered documentation map
 ├── plan.md                 authoritative spec (2185 lines)
-└── PROGRESS.md             session-by-session build log
+├── 05_PRE_FLUTTER_STABILIZATION_PLAN.md
+│                           active pre-Flutter stabilization plan
+├── 06_FLUTTER_UI_REWORK_PLAN.md
+│                           Flutter UI migration plan
+└── 90_PROGRESS_LOG.md      session-by-session build log
 ```
 
 ---
@@ -32,27 +49,51 @@ leadlag-lab/
 
 Зависимости (ставятся автоматически): numpy, pandas, pyarrow, websockets, pyyaml, fastapi, uvicorn, psutil, tqdm.
 
-### 2. Скопировать systemd-юниты
+### 2. Настроить JupyterLab
 
 ```bash
-cp /root/projects/leadlag-lab/deploy/leadlag-lab.service     /etc/systemd/system/
-cp /root/projects/leadlag-lab/deploy/leadlag-monitor.service /etc/systemd/system/
+sudo bash /root/projects/leadlag-lab/scripts/setup_jupyter.sh
+```
+
+Скрипт создаёт системного пользователя `leadlag-lab`, директории и генерирует случайный токен в `config/jupyter.env`.
+
+### 3. Скопировать systemd-юниты
+
+```bash
+cp /root/projects/leadlag-lab/deploy/leadlag-lab.service         /etc/systemd/system/
+cp /root/projects/leadlag-lab/deploy/leadlag-monitor.service     /etc/systemd/system/
+cp /root/projects/leadlag-lab/deploy/leadlag-lab-jupyter.service /etc/systemd/system/
 systemctl daemon-reload
 ```
 
-### 3. Включить и запустить сервисы
+### 4. Включить и запустить сервисы
 
 ```bash
-systemctl enable --now leadlag-lab leadlag-monitor
+systemctl enable --now leadlag-lab leadlag-monitor leadlag-lab-jupyter
 ```
 
 Что запускается:
 - **leadlag-lab** — FastAPI (uvicorn) на `127.0.0.1:8899`
 - **leadlag-monitor** — демон, пишет `data/.system_history.jsonl` (каждые 5с) и `data/.ping_cache.json` (каждые 10с)
+- **leadlag-lab-jupyter** — JupyterLab на `127.0.0.1:8889`, токен из `config/jupyter.env`
 
-### 4. Добавить nginx location block
+### 5. Добавить nginx location blocks
 
-Открыть `/etc/nginx/sites-enabled/vyv_sites` и вставить **перед** блоком `location ~ ^/(?!api/)...`:
+**Jupyter snippet** (скопировать в `/etc/nginx/snippets/`):
+
+```bash
+cp /root/projects/leadlag-lab/deploy/nginx-leadlag-lab-jupyter.conf \
+   /etc/nginx/snippets/leadlag-lab-jupyter-location.conf
+```
+
+Открыть `/etc/nginx/sites-enabled/vyv_sites` и добавить include **перед** блоком `location ^~ /leadlag-lab/`:
+
+```nginx
+# leadlag-lab JupyterLab (:8889) — должен быть ПЕРЕД /leadlag-lab/
+include /etc/nginx/snippets/leadlag-lab-jupyter-location.conf;
+```
+
+**Основной UI** (`/leadlag-lab/`) уже должен быть в конфиге. Если нет — вставить перед блоком `location ~ ^/(?!api/)...`:
 
 ```nginx
 location ^~ /leadlag-lab/ {
@@ -75,24 +116,30 @@ location ^~ /leadlag-lab/ {
 nginx -t && systemctl reload nginx
 ```
 
-### 5. Проверить
+### 6. Проверить
 
 ```bash
-# Локально:
+# Локально API:
 curl -s http://127.0.0.1:8899/api/system/stats | head -5
 
 # Через nginx:
 curl -sk https://vyv.ftp.sh/leadlag-lab/ -w "\nHTTP %{http_code}\n"
 
 # Статус сервисов:
-systemctl status leadlag-lab leadlag-monitor
+systemctl status leadlag-lab leadlag-monitor leadlag-lab-jupyter
 
 # Логи:
 journalctl -u leadlag-lab -n 50
 journalctl -u leadlag-monitor -n 20
+journalctl -u leadlag-lab-jupyter -n 50
+
+# Smoke-тест Jupyter:
+bash /root/projects/leadlag-lab/scripts/smoke_jupyter.sh
 ```
 
-Открыть в браузере: `https://vyv.ftp.sh/leadlag-lab/`
+Открыть в браузере:
+- UI: `https://vyv.ftp.sh/leadlag-lab/`
+- JupyterLab: `https://vyv.ftp.sh/leadlag-lab/lab/` (токен в `config/jupyter.env`)
 
 ---
 
@@ -137,20 +184,34 @@ systemctl daemon-reload
 systemctl restart leadlag-lab leadlag-monitor
 ```
 
+### Перезапуск JupyterLab
+
+```bash
+systemctl restart leadlag-lab-jupyter
+```
+
+### После изменений в systemd unit-файле Jupyter
+
+```bash
+cp /root/projects/leadlag-lab/deploy/leadlag-lab-jupyter.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl restart leadlag-lab-jupyter
+```
+
 ### Полная остановка
 
 ```bash
-systemctl stop leadlag-lab leadlag-monitor
+systemctl stop leadlag-lab leadlag-monitor leadlag-lab-jupyter
 ```
 
 ### Полный перезапуск с нуля (если всё сломалось)
 
 ```bash
-systemctl stop leadlag-lab leadlag-monitor
+systemctl stop leadlag-lab leadlag-monitor leadlag-lab-jupyter
 /root/projects/leadlag/.venv/bin/pip install -e /root/projects/leadlag-lab/
 systemctl daemon-reload
-systemctl start leadlag-lab leadlag-monitor
-systemctl status leadlag-lab leadlag-monitor
+systemctl start leadlag-lab leadlag-monitor leadlag-lab-jupyter
+systemctl status leadlag-lab leadlag-monitor leadlag-lab-jupyter
 ```
 
 ---
@@ -208,10 +269,16 @@ print(bt)
 | Бектесты          | `data/backtest/{strategy}_{timestamp}/`          |
 | Paper trading     | `data/paper/{strategy}/`                         |
 | Статус-файлы      | `data/.collector_status.json`, `.paper_status.json` |
-| Systemd юниты     | `deploy/leadlag-lab.service`, `deploy/leadlag-monitor.service` |
-| Nginx snippet     | `deploy/nginx-leadlag-lab.conf`                  |
+| Systemd юниты     | `deploy/leadlag-lab.service`, `deploy/leadlag-monitor.service`, `deploy/leadlag-lab-jupyter.service` |
+| Nginx snippets    | `deploy/nginx-leadlag-lab.conf`, `deploy/nginx-leadlag-lab-jupyter.conf` |
+| Jupyter порт      | `http://127.0.0.1:8889`                          |
+| Jupyter URL       | `https://vyv.ftp.sh/leadlag-lab/lab/`            |
+| Jupyter токен     | `config/jupyter.env` (JUPYTER_TOKEN)             |
+| Jupyter setup     | `scripts/setup_jupyter.sh`                       |
+| Jupyter smoke     | `scripts/smoke_jupyter.sh`                       |
 | Логи API          | `journalctl -u leadlag-lab -f`                   |
 | Логи монитора     | `journalctl -u leadlag-monitor -f`               |
+| Логи Jupyter      | `journalctl -u leadlag-lab-jupyter -f`           |
 
 ---
 

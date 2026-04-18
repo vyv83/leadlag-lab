@@ -1,0 +1,34 @@
+[Unit]
+Description=LeadLag Lab JupyterLab
+After=network.target
+
+[Service]
+Type=simple
+User=leadlag-lab
+Group=leadlag-lab
+WorkingDirectory=/root/projects/leadlag-lab
+EnvironmentFile=/root/projects/leadlag-lab/config/jupyter.env
+Environment=HOME=/root/projects/leadlag-lab/data/jupyter_home
+Environment=JUPYTER_RUNTIME_DIR=/root/projects/leadlag-lab/data/jupyter_home/runtime
+Environment=JUPYTER_DATA_DIR=/root/projects/leadlag-lab/data/jupyter_home/data
+ExecStart=/root/projects/leadlag/.venv/bin/jupyter lab \
+    --no-browser --ip=127.0.0.1 --port=${JUPYTER_PORT} \
+    --ServerApp.base_url=${JUPYTER_BASE_URL} \
+    --IdentityProvider.token=${JUPYTER_TOKEN} \
+    --ServerApp.root_dir=/root/projects/leadlag-lab/notebooks \
+    --ServerApp.trust_xheaders=True \
+    --ServerApp.allow_remote_access=True
+Restart=always
+RestartSec=5
+SyslogIdentifier=leadlag-lab-jupyter
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/root/projects/leadlag-lab/notebooks /root/projects/leadlag-lab/data /root/projects/leadlag-lab/config
+MemoryHigh=1536M
+MemoryMax=2G
+CPUQuota=70%
+
+[Install]
+WantedBy=multi-user.target
