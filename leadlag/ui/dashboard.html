@@ -53,7 +53,7 @@
 <!-- Group 3: Collector Status -->
 <div class="section-group">
   <section>
-    <h2>Collector Status</h2>
+    <h2>Collector Status <span id="staleBanner" class="banner" hidden>Collector stopped — showing last snapshot <span id="staleAge"></span></span></h2>
     <div class="toolbar">
       <button id="startCollector">Start Collection</button>
       <button id="stopCollector">Stop Collector</button>
@@ -228,10 +228,24 @@ function renderCollector(st) {
   document.getElementById("startCollector").disabled = !!st.running;
   document.getElementById("stopCollector").disabled = !st.running && !st.proc_alive;
   document.getElementById("clearStale").hidden = !st.stale;
+  const staleBanner = document.getElementById("staleBanner");
+  if (st.stale) {
+    staleBanner.hidden = false;
+    const age = st.updated_at_ms ? seconds(Math.round((Date.now() - Number(st.updated_at_ms)) / 1000)) : "unknown age";
+    document.getElementById("staleAge").textContent = `(${age} old)`;
+  } else {
+    staleBanner.hidden = true;
+  }
   fillTable("#collectorVenues", st.venues || [], r => [
     r.name, r.role, statusCell(st.stale ? "stale" : r.status), r.ticks, fmt(r.ticks_per_s_1m), r.bbo, fmt(r.bbo_per_s),
     r.reconnects, utc(r.last_tick_ts), fmt(r.seconds_since_last_tick), fmt(r.last_price, 2), r.last_error || "",
   ]);
+  const table = document.getElementById("collectorVenues");
+  if (st.stale) {
+    table.classList.add("stale-table");
+  } else {
+    table.classList.remove("stale-table");
+  }
 }
 
 function renderCollectorDialog(venues) {

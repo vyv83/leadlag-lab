@@ -164,6 +164,20 @@ h3 { font-size: 11px; color: #8b949e; font-weight: 600; margin: 0 0 6px; text-tr
 .ping-warn { color: #d29922; }
 .ping-bad { color: #f85149; }
 
+/* ── Stale Table ── */
+.stale-table { opacity: 0.5; }
+.stale-table th { background: #161b22; }
+
+/* ── Decision Strip ── */
+.decision-strip {
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  padding: 6px 8px; border-radius: 3px; margin: 6px 0;
+  background: rgba(31,111,235,0.08); border: 1px solid #1f6feb33;
+  font-size: 11px;
+}
+.decision-strip .hint { color: #8b949e; }
+.decision-strip a { font-weight: 600; }
+
 /* ── Section Group ── */
 .section-group {
   border: 1px solid #21262d; border-radius: 4px; padding: 10px; margin-bottom: 14px;

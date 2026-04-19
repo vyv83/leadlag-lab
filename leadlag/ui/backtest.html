@@ -57,6 +57,11 @@
   </div>
 </section>
 
+<div id="lowSampleBanner" class="banner" hidden>
+  Low-sample backtest: fewer than 20 trades. Results are not statistically meaningful.
+  <a id="lowSampleCta" class="button-link" href="#">Go back to Notebook to expand filters/data</a>
+</div>
+
 <section id="detailCharts" hidden>
   <h2>Equity</h2>
   <div class="toolbar">
@@ -153,6 +158,7 @@ async function init() {
   renderBreakdowns();
   setupTradeFilters();
   applyTradeFilters();
+  renderLowSampleBanner();
   document.getElementById("status").textContent = "";
 }
 
@@ -411,6 +417,17 @@ function tradeById(id) {
 }
 
 document.querySelectorAll(".layerToggle").forEach(input => input.onchange = renderEquity);
+
+function renderLowSampleBanner() {
+  const n = stats.n_trades || 0;
+  const banner = document.getElementById("lowSampleBanner");
+  if (n < 20) {
+    banner.hidden = false;
+    document.getElementById("lowSampleCta").href = `explorer.html?session=${meta.session_id || ""}`;
+  } else {
+    banner.hidden = true;
+  }
+}
 
 (async () => {
   try {

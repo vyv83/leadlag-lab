@@ -208,15 +208,13 @@ function renderTable(strats) {
     // actions
     const td10 = el("td");
     td10.style.whiteSpace = "nowrap";
-    const runBtn = el("button", { onclick: () => quickBacktest(s.name) }, ["▶"]);
-    runBtn.title = "Run Backtest";
+    const runBtn = el("button", { onclick: () => quickBacktest(s.name) }, ["Run backtest"]);
     td10.appendChild(runBtn);
     if (latest) {
-      td10.appendChild(el("a", { href: `backtest.html?id=${latest.id}`, class: "button-link", style: "margin-left:4px" }, ["view"]));
-      td10.appendChild(el("a", { href: `paper.html`, class: "button-link", style: "margin-left:4px" }, ["paper"]));
+      td10.appendChild(el("a", { href: `backtest.html?id=${latest.id}`, class: "button-link", style: "margin-left:4px" }, ["View backtest"]));
+      td10.appendChild(el("a", { href: `paper.html`, class: "button-link", style: "margin-left:4px" }, ["Start paper"]));
     }
-    const delBtn = el("button", { onclick: () => deleteStrat(s.name), style: "margin-left:4px;color:#f85149" }, ["×"]);
-    delBtn.title = "Delete";
+    const delBtn = el("button", { onclick: () => deleteStrat(s.name), style: "margin-left:4px;color:#f85149" }, ["Delete"]);
     td10.appendChild(delBtn);
     tr.appendChild(td10);
 

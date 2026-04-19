@@ -139,7 +139,16 @@ function renderCards() {
 }
 
 function renderCharts() {
+  const warnings = mc.warnings || [];
+  const isLowSample = warnings.includes("n_trades_lt_20_monte_carlo_is_low_confidence");
   document.getElementById("charts").hidden = false;
+  if (isLowSample) {
+    document.getElementById("charts").style.opacity = "0.35";
+    document.getElementById("charts").style.pointerEvents = "none";
+  } else {
+    document.getElementById("charts").style.opacity = "";
+    document.getElementById("charts").style.pointerEvents = "";
+  }
   const curves = mc.sim_equity_curves || [];
   const traces = curves.slice(0, 1000).map(row => ({
     x: row.map((_, i) => i + 1),

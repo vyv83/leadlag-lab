@@ -47,6 +47,11 @@ def root():
     return RedirectResponse("ui/dashboard.html")
 
 
+@app.get("/leadlag-lab/")
+def leadlag_lab_root():
+    return RedirectResponse("/leadlag-lab/ui/dashboard.html")
+
+
 if UI_DIR.exists():
     app.mount("/ui", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
 

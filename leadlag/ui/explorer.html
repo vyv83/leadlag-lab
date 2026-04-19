@@ -76,6 +76,13 @@
   </div>
   <div class="chart-panel">
     <div id="eventTitle" class="section-title">Select an event</div>
+    <div id="decisionStrip" class="decision-strip" hidden>
+      <span class="hint">Pattern visible?</span>
+      <span id="dsFollower">—</span>
+      <span id="dsBbo" class="hint">BBO: —</span>
+      <a id="dsNotebook" href="/leadlag-lab/lab/" target="_blank">Open Notebook</a>
+      <a id="dsStrategy" href="strategy.html">Create Strategy</a>
+    </div>
     <div id="noBboBanner" class="banner" hidden></div>
     <div class="chart tall" id="eventChart"></div>
     <h2>Followers</h2>
@@ -231,6 +238,7 @@ async function selectEvent(binIdx) {
   selectedDetail = await fetchJSON(`/api/sessions/${selectedSession()}/event/${selectedBin}`);
   renderChart();
   renderFollowersTable();
+  renderDecisionStrip();
 }
 
 function renderChart() {
@@ -468,6 +476,19 @@ document.getElementById("chartFollower").onchange = () => {
 document.getElementById("showBbo").onchange = renderChart;
 document.getElementById("showEma").onchange = renderChart;
 document.getElementById("showAllFollowers").onchange = renderChart;
+
+function renderDecisionStrip() {
+  const strip = document.getElementById("decisionStrip");
+  if (!selectedEvent) { strip.hidden = true; return; }
+  strip.hidden = false;
+  const follower = document.getElementById("chartFollower").value;
+  const fm = (selectedEvent.follower_metrics || {})[follower] || {};
+  document.getElementById("dsFollower").textContent = `${follower}: lag50=${fmt(fm.lag_50_ms, 0)}ms`;
+  const bboOk = (meta.bbo_available || {})[follower];
+  document.getElementById("dsBbo").textContent = bboOk ? "BBO: available" : "BBO: not available";
+  document.getElementById("dsBbo").className = bboOk ? "ok" : "ping-warn hint";
+}
+
 document.getElementById("prevEvent").onclick = () => moveEvent(-1);
 document.getElementById("nextEvent").onclick = () => moveEvent(1);
 document.getElementById("reset").onclick = () => {

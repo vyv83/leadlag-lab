@@ -37,7 +37,7 @@
   <h2>Venue Summary</h2>
   <div class="table-scroll">
     <table id="venues"><thead><tr>
-      <th>venue</th><th>role</th><th>flag</th><th>reasons</th><th>ticks</th><th>ticks/s avg</th>
+      <th>venue</th><th>role</th><th>flag</th><th>reasons</th><th>recommendation</th><th>ticks</th><th>ticks/s avg</th>
       <th>ticks/s max</th><th>bin coverage</th><th>BBO</th><th>BBO/s</th><th>BBO coverage</th>
       <th>BBO available</th><th>median price</th><th>leader dev</th><th>reconnects</th><th>downtime</th>
       <th>uptime</th><th>zero price</th><th>zero qty</th><th>buy/sell</th>
@@ -120,14 +120,19 @@ function renderCards(q, meta) {
 
 function renderVenueTable() {
   const visible = badOnly ? rows.filter(r => r.flag !== "good") : rows;
-  fillTable("#venues", visible, r => [
-    r.venue, r.role, r.flag, (r.flag_reasons || []).join(", "), r.ticks_total,
-    fmt(r.ticks_per_s_avg), fmt(r.ticks_per_s_max), `${fmt(r.bin_coverage_pct)}%`,
-    r.bbo_total, fmt(r.bbo_per_s_avg), `${fmt(r.bbo_coverage_pct)}%`, naMark(r.bbo_available),
-    fmt(r.median_price, 2), fmt(r.price_deviation_from_leader_bps), r.reconnects,
-    fmt(r.downtime_s), `${fmt(r.uptime_pct)}%`, r.zero_price_ticks, r.zero_qty_ticks,
-    `${pct(r.side_buy_pct)} / ${pct(r.side_sell_pct)}`,
-  ]);
+  fillTable("#venues", visible, r => {
+    const hint = qualityHint(r);
+    const hintTd = el("td", { className: hint.cls });
+    hintTd.textContent = hint.text;
+    return [
+      r.venue, r.role, r.flag, (r.flag_reasons || []).join(", "), hintTd, r.ticks_total,
+      fmt(r.ticks_per_s_avg), fmt(r.ticks_per_s_max), `${fmt(r.bin_coverage_pct)}%`,
+      r.bbo_total, fmt(r.bbo_per_s_avg), `${fmt(r.bbo_coverage_pct)}%`, naMark(r.bbo_available),
+      fmt(r.median_price, 2), fmt(r.price_deviation_from_leader_bps), r.reconnects,
+      fmt(r.downtime_s), `${fmt(r.uptime_pct)}%`, r.zero_price_ticks, r.zero_qty_ticks,
+      `${pct(r.side_buy_pct)} / ${pct(r.side_sell_pct)}`,
+    ];
+  });
   document.querySelectorAll("#venues tbody tr").forEach((tr, i) => {
     const r = visible[i];
     tr.classList.toggle("loss-row", r.flag === "bad");
@@ -214,6 +219,14 @@ function renderBbo() {
 
 document.getElementById("onlyBad").onclick = () => { badOnly = true; renderVenueTable(); };
 document.getElementById("showAll").onclick = () => { badOnly = false; renderVenueTable(); };
+function qualityHint(r) {
+  if (r.flag === "bad") return { cls: "no", text: "exclude from strategy" };
+  if (!r.bbo_available) return { cls: "ping-warn", text: "BBO unavailable — avoid for execution-cost strategies" };
+  if (Number(r.bin_coverage_pct || 0) < 50) return { cls: "ping-warn", text: "low coverage — use with caution" };
+  if (r.flag === "warning") return { cls: "ping-warn", text: "check issues before using" };
+  return { cls: "ok", text: "safe for strategy" };
+}
+
 document.getElementById("exportReport").onclick = () => {
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
   const a = document.createElement("a");
