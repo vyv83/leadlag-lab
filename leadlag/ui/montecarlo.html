@@ -45,6 +45,13 @@
 
 <section id="cards" class="cards" hidden></section>
 
+<div id="mcDecision" class="decision-strip" hidden>
+  <span class="hint">Significance:</span>
+  <span id="mcDecisionMsg">—</span>
+  <a id="mcPaperLink" href="paper.html" class="button-link">Start Paper Trading →</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="hint" style="margin-left:8px">← Revise in Notebook ↗</a>
+</div>
+
 <section id="charts" hidden>
   <h2>Equity Curves</h2>
   <div class="chart tall" id="equityFan"></div>
@@ -136,6 +143,7 @@ function renderCards() {
   ]);
   document.getElementById("cards").hidden = false;
   renderWarnings();
+  renderMcDecision();
 }
 
 function renderCharts() {
@@ -179,6 +187,31 @@ function renderCharts() {
   histogram("finalHist", mc.sim_final_pnls || [], "Final PnL", "bps", mc.real_pnl);
   histogram("sharpeHist", mc.sim_sharpes || [], "Sharpe", "ratio", mc.real_sharpe);
   histogram("ddHist", mc.sim_max_dds || [], "Max Drawdown", "bps", mc.real_max_dd);
+}
+
+function renderMcDecision() {
+  const strip = document.getElementById("mcDecision");
+  strip.hidden = false;
+  const pval = Number(mc.p_value || 1);
+  const prob = Number(mc.prob_of_profit || 0);
+  const warnings = mc.warnings || [];
+  const isLowSample = warnings.includes("n_trades_lt_20_monte_carlo_is_low_confidence");
+  let msg, cls;
+  if (isLowSample) {
+    msg = "Low confidence: fewer than 20 trades. Expand data in Notebook first.";
+    cls = "ping-warn";
+  } else if (pval < 0.05) {
+    msg = `p-value ${(pval * 100).toFixed(1)}% — strategy shows statistical significance. Ready for Paper Trading.`;
+    cls = "ok";
+  } else if (prob > 0.6) {
+    msg = `p-value ${(pval * 100).toFixed(1)}% — not significant yet, but ${(prob * 100).toFixed(0)}% probability of profit. Refine in Notebook.`;
+    cls = "ping-warn";
+  } else {
+    msg = `p-value ${(pval * 100).toFixed(1)}% — results are not statistically significant. Revise strategy in Notebook.`;
+    cls = "no";
+  }
+  document.getElementById("mcDecisionMsg").textContent = msg;
+  document.getElementById("mcDecisionMsg").className = cls;
 }
 
 function renderWarnings() {

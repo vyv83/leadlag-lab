@@ -230,3 +230,26 @@ function plotXNumber(x) {
   const d = Date.parse(x);
   return Number.isFinite(d) ? d : NaN;
 }
+
+/* ── Shared chart helpers (used by explorer + trade) ── */
+function statusCell(status) {
+  const s = String(status || "unknown");
+  const cls = s === "ok" || s === "running" ? "ok" : s === "reconnecting" || s === "stale" ? "ping-warn" : "no";
+  const td = el("td", { className: cls });
+  td.textContent = s;
+  return td;
+}
+function vline(x, color, dash) {
+  return { type: "line", xref: "x", yref: "paper", x0: x, x1: x, y0: 0, y1: 1, line: { color, width: 1, dash } };
+}
+function hline(y, x0, x1, color) {
+  return { type: "line", xref: "x", yref: "y2", x0, x1, y0: y, y1: y, line: { color, width: 1, dash: "dash" } };
+}
+function valueAtZero(values, rel) {
+  const idx = rel.findIndex(x => Number(x) === 0);
+  const v = idx >= 0 ? values[idx] : firstNumber(values);
+  return v ? Number(v) : null;
+}
+function labelAt(x, text) {
+  return { x, y: 1.0, xref: "x", yref: "paper", text, showarrow: false, yanchor: "bottom", font: { size: 11 } };
+}

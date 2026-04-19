@@ -1,4 +1,5 @@
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
        margin: 0; padding: 0; background: #0e1117; color: #c9d1d9; }
 
@@ -87,10 +88,17 @@ pre { background: #161b22; padding: 8px; border-radius: 3px; overflow-x: auto; f
 
 /* ── Explorer ── */
 .explorer-grid {
-  display: grid; grid-template-columns: minmax(280px, 35%) 1fr; gap: 10px; align-items: start;
+  display: grid; grid-template-columns: 256px 1fr; gap: 10px; align-items: start;
 }
-.event-panel { max-height: 580px; overflow: auto; border: 1px solid #21262d; }
-.event-panel table { table-layout: fixed; }
+.event-panel { height: calc(100vh - 160px); overflow-y: auto; border: 1px solid #21262d; }
+.event-panel table { table-layout: fixed; width: 100%; }
+.event-panel th, .event-panel td { overflow: hidden; text-overflow: ellipsis; padding: 2px 3px; }
+#events th:nth-child(1), #events td:nth-child(1) { width: 20px; text-align: right; }
+#events th:nth-child(2), #events td:nth-child(2) { width: 24px; text-align: center; }
+#events th:nth-child(3), #events td:nth-child(3) { width: 18px; text-align: center; }
+#events th:nth-child(4), #events td:nth-child(4) { width: 30px; text-align: right; }
+#events th:nth-child(5), #events td:nth-child(5) { width: 80px; }
+#events th:nth-child(6), #events td:nth-child(6) { width: 20px; text-align: right; }
 tr.selected td { background: #1f6feb33; }
 .chart-panel { min-width: 0; overflow-x: auto; }
 #followers { min-width: 980px; table-layout: auto; }
@@ -177,6 +185,7 @@ h3 { font-size: 11px; color: #8b949e; font-weight: 600; margin: 0 0 6px; text-tr
 }
 .decision-strip .hint { color: #8b949e; }
 .decision-strip a { font-weight: 600; }
+.decision-strip a.hint { font-weight: normal; cursor: pointer; }
 
 /* ── Section Group ── */
 .section-group {

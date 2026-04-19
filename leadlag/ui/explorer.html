@@ -56,8 +56,9 @@
     <button id="reset">Reset Filters</button>
   </div>
   <div class="toolbar">
-    <button id="prevEvent">Prev Event</button>
-    <button id="nextEvent">Next Event</button>
+    <button id="prevEvent">Prev</button>
+    <button id="nextEvent">Next</button>
+    <span class="muted" title="Keyboard: ← → or ↑ ↓ to navigate events">↑↓ keys</span>
     <label><input id="showBbo" type="checkbox" checked> Show BBO Overlay</label>
     <label><input id="showEma" type="checkbox"> Show EMA baseline</label>
     <label><input id="showAllFollowers" type="checkbox"> Show All Followers</label>
@@ -71,7 +72,7 @@
 <section class="explorer-grid">
   <div class="event-panel">
     <table id="events"><thead><tr>
-      <th>#</th><th>Signal</th><th>Dir</th><th>sigma</th><th>Time UTC</th><th>Lagging</th><th>Leader</th><th>Trade</th>
+      <th>#</th><th>Sig</th><th>Dir</th><th>σ</th><th>time</th><th>lag</th><th>leader</th>
     </tr></thead><tbody></tbody></table>
   </div>
   <div class="chart-panel">
@@ -197,18 +198,17 @@ function renderEventsTable() {
   filteredEvents.forEach((e, i) => {
     const tr = el("tr", { "data-bin": e.bin_idx, onclick: () => selectEvent(e.bin_idx) });
     if (Number(e.bin_idx) === Number(selectedBin)) tr.classList.add("selected");
-    const tradeLink = tradeDetail && Number(tradeDetail.trade.signal_bin_idx) === Number(e.bin_idx)
-      ? linkTo(`trade.html?backtest=${btParam}&trade=${tradeParam}`, "trade")
-      : "";
+    const isTradeEvent = tradeDetail && Number(tradeDetail.trade.signal_bin_idx) === Number(e.bin_idx);
+    if (isTradeEvent) tr.classList.add("profit-row");
+    const timeStr = e.ts_ms ? new Date(Number(e.ts_ms)).toISOString().slice(11, 23) : "—";
     const cells = [
       { html: false, val: i + 1 },
       { html: true,  val: sigBadge(e.signal) },
       { html: true,  val: dirArrow(e.direction) },
       { html: false, val: fmt(Number(e.magnitude_sigma), 2) },
-      { html: false, val: utc(e.ts_ms) },
+      { html: false, val: timeStr },
       { html: false, val: e.n_lagging || (e.lagging_followers || []).length },
-      { html: false, val: e.anchor_leader || e.leader },
-      { html: false, val: tradeLink },
+      { html: false, val: (e.anchor_leader || e.leader || "").replace(/ Perp| Spot/, "") },
     ];
     cells.forEach(c => {
       const td = el("td");
@@ -431,20 +431,6 @@ function netAt(grid, hold) {
   return "—";
 }
 
-function valueAtZero(values, rel) {
-  const idx = rel.findIndex(x => Number(x) === 0);
-  const v = idx >= 0 ? values[idx] : firstNumber(values);
-  return v ? Number(v) : null;
-}
-function vline(x, color, dash) {
-  return { type: "line", xref: "x", yref: "paper", x0: x, x1: x, y0: 0, y1: 1, line: { color, width: 1, dash } };
-}
-function labelAt(x, text) {
-  return { x, y: 1.0, xref: "x", yref: "paper", text, showarrow: false, yanchor: "bottom", font: { size: 11 } };
-}
-function hline(y, x0, x1, color) {
-  return { type: "line", xref: "x", yref: "y2", x0, x1, y0: y, y1: y, line: { color, width: 1, dash: "dash" } };
-}
 function eventIndex() {
   return filteredEvents.findIndex(e => Number(e.bin_idx) === Number(selectedBin));
 }
@@ -487,6 +473,9 @@ function renderDecisionStrip() {
   const bboOk = (meta.bbo_available || {})[follower];
   document.getElementById("dsBbo").textContent = bboOk ? "BBO: available" : "BBO: not available";
   document.getElementById("dsBbo").className = bboOk ? "ok" : "ping-warn hint";
+  const sessionId = selectedSession();
+  const stratParams = new URLSearchParams({ session: sessionId, follower }).toString();
+  document.getElementById("dsStrategy").href = `strategy.html?${stratParams}`;
 }
 
 document.getElementById("prevEvent").onclick = () => moveEvent(-1);

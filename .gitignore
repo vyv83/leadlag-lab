@@ -43,6 +43,16 @@ data/**/*.jsonl
 
 # Jupyter runtime noise
 .ipynb_checkpoints/
+data/jupyter_home/.ipython/
+data/jupyter_home/.jupyter/lab/workspaces/
+data/jupyter_home/.jupyter/migrated
+data/jupyter_home/runtime/
+
+# Data runtime files
+data/.paper_venues.json
+
+# Debug output
+debug/
 
 # Screenshots and images
 *.png

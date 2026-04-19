@@ -45,6 +45,13 @@
   </div>
 </section>
 
+<div id="qualityDecision" class="decision-strip" hidden>
+  <span class="hint">Session ready?</span>
+  <span id="qdMsg">—</span>
+  <a id="qdExplorer" href="#" class="button-link">Open in Explorer →</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="hint" style="margin-left:8px">← Exclude bad venues in Notebook ↗</a>
+</div>
+
 <section>
   <h2>Quality Charts</h2>
   <div class="chart-grid">
@@ -52,15 +59,19 @@
     <div class="chart small" id="ticksChart"></div>
     <div class="chart small" id="bboSpreadChart"></div>
     <div class="chart small" id="priceDevChart"></div>
-    <div class="chart small" id="qualityHeatmap"></div>
-    <div class="chart small" id="gapTimeline"></div>
+  </div>
+  <div class="chart-grid" style="grid-template-columns: 1fr 1fr">
+    <div class="chart" id="qualityHeatmap"></div>
+    <div class="chart" id="gapTimeline"></div>
   </div>
 </section>
 
 <section class="breakdown-grid">
   <div>
     <h2>Timeline Gaps</h2>
-    <table id="gaps"><thead><tr><th>venue</th><th>start UTC</th><th>end UTC</th><th>duration s</th></tr></thead><tbody></tbody></table>
+    <div class="table-scroll">
+      <table id="gaps"><thead><tr><th>venue</th><th>start UTC</th><th>end UTC</th><th>duration s</th></tr></thead><tbody></tbody></table>
+    </div>
   </div>
   <div>
     <h2>BBO Analysis</h2>
@@ -97,6 +108,7 @@ async function load(id) {
   rows = Object.entries(q.venues || {}).map(([venue, value]) => ({ venue, ...value }));
   renderCards(q, meta);
   renderVenueTable();
+  renderQualityDecision(id);
   renderCharts();
   renderGaps(q.timeline_gaps || []);
   renderBbo();
@@ -167,8 +179,9 @@ function renderQualityHeatmap(venues) {
   }], {
     ...PLOT_LAYOUT,
     title: { text: "Coverage heatmap" },
-    margin: { t: 44, l: 75, r: 20, b: 70 },
-    xaxis: { tickangle: -35 },
+    margin: { t: 44, l: 90, r: 20, b: 90 },
+    xaxis: { tickangle: -35, automargin: true },
+    yaxis: { automargin: true },
   }, PLOT_CFG);
 }
 
@@ -192,29 +205,59 @@ function renderGapTimeline(q) {
   }], {
     ...PLOT_LAYOUT,
     title: { text: "Timeline gaps" },
+    margin: { t: 44, l: 20, r: 20, b: 50 },
     xaxis: { title: "UTC" },
-    yaxis: { title: "venue" },
+    yaxis: { automargin: true },
   }, PLOT_CFG);
 }
 
 function bar(id, x, y, title, yTitle) {
   Plotly.react(id, [{ x, y, type:"bar", marker:{color:y.map(v => Number(v || 0) < 0 ? "#f85149" : "#58a6ff") } }], {
     ...PLOT_LAYOUT,
-    margin: { t: 44, l: 55, r: 25, b: 70 },
+    margin: { t: 44, l: 55, r: 25, b: 30 },
     title:{text:title},
-    xaxis:{tickangle:-35},
+    xaxis:{tickangle:-35, automargin: true},
     yaxis:{title:yTitle},
   }, PLOT_CFG);
 }
 
 function renderGaps(gaps) {
-  fillTable("#gaps", gaps, g => [g.venue, utc(g.start_ms), utc(g.end_ms), fmt(g.duration_s)]);
+  const sorted = [...gaps].sort((a, b) => Number(b.duration_s) - Number(a.duration_s));
+  fillTable("#gaps", sorted.slice(0, 50), g => [g.venue, utc(g.start_ms), utc(g.end_ms), fmt(g.duration_s)]);
+  document.querySelector("#gaps").previousElementSibling?.remove();
+  if (sorted.length > 50) {
+    const note = el("div", { class: "muted" }, [`Showing 50 of ${sorted.length} gaps (longest first)`]);
+    document.getElementById("gaps").before(note);
+  }
 }
 function renderBbo() {
   fillTable("#bbo", rows, r => [
     r.venue, naMark(r.bbo_available), fmt(r.bbo_median_spread_bps), fmt(r.bbo_mean_spread_bps),
     fmt(r.bbo_max_spread_bps), fmt(r.bbo_p95_spread_bps), fmt(r.bbo_p99_spread_bps), fmt(r.bbo_pct_above_5bps),
   ]);
+}
+
+function renderQualityDecision(sessionId) {
+  const strip = document.getElementById("qualityDecision");
+  if (!rows.length) { strip.hidden = true; return; }
+  strip.hidden = false;
+  const bad = rows.filter(r => r.flag === "bad").length;
+  const warn = rows.filter(r => r.flag === "warning").length;
+  const good = rows.filter(r => r.flag === "good").length;
+  let msg, cls;
+  if (bad > 0) {
+    msg = `${bad} venue${bad > 1 ? "s" : ""} flagged bad — exclude from strategy before proceeding`;
+    cls = "no";
+  } else if (warn > 0) {
+    msg = `${warn} venue${warn > 1 ? "s" : ""} need review — use with caution in strategy`;
+    cls = "ping-warn";
+  } else {
+    msg = `All ${good} venues OK — safe to proceed to Explorer`;
+    cls = "ok";
+  }
+  document.getElementById("qdMsg").textContent = msg;
+  document.getElementById("qdMsg").className = cls;
+  document.getElementById("qdExplorer").href = `explorer.html?session=${sessionId}`;
 }
 
 document.getElementById("onlyBad").onclick = () => { badOnly = true; renderVenueTable(); };

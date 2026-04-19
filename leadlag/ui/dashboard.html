@@ -17,7 +17,7 @@
   <a href="backtest.html">Backtests</a>
   <a href="montecarlo.html">Monte Carlo</a>
   <a href="paper.html">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Open Jupyter</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
 </nav>
 </header>
 <main>
@@ -69,14 +69,14 @@
     <dialog id="collectorDialog">
       <h2>Start Collection</h2>
       <div class="toolbar">
-        <label>Duration hours <input id="dashDurationHours" type="number" min="0.1" step="0.1" value="1"></label>
-        <label>Bin size ms <input id="dashBinSize" type="number" min="10" step="10" value="50"></label>
-        <label>Rotation minutes <input id="dashRotation" type="number" min="1" step="1" value="30"></label>
+        <label>Duration h <input id="dashDurationHours" type="number" min="0.1" step="0.1" value="1" style="width:48px"></label>
+        <label>Bin ms <input id="dashBinSize" type="number" min="10" step="10" value="50" style="width:48px"></label>
+        <label>Rotation m <input id="dashRotation" type="number" min="1" step="1" value="30" style="width:40px"></label>
       </div>
       <div class="toolbar">
-        <button id="dashSelectLeaders">Select Leaders</button>
-        <button id="dashSelectFollowers">Select Followers</button>
-        <button id="dashSelectAll">Select All</button>
+        <button id="dashSelectLeaders">Leaders</button>
+        <button id="dashSelectFollowers">Followers</button>
+        <button id="dashSelectAll">All</button>
         <button id="dashClearSelection">Clear</button>
       </div>
       <div class="table-scroll compact-dialog">
@@ -119,21 +119,11 @@
   </section>
 </div>
 
-<!-- Group 6: Last Analysis Session -->
-<div class="section-group" id="lastSessionSection">
-  <section>
-    <h2>Last Analysis Session</h2>
-    <div class="cards" id="lastSessionCards"></div>
-    <div class="toolbar">
-      <a class="button-link" id="openSessionExplorer" href="#">Open in Explorer</a>
-      <button id="reanalyzeSession">Re-analyze</button>
-    </div>
-  </section>
-</div>
-
 <section>
   <h2>Active Files</h2>
-  <table id="files"><thead><tr><th>path</th><th>size MB</th><th>rows</th><th>time range UTC</th><th>venues</th><th>modified UTC</th></tr></thead><tbody></tbody></table>
+  <div class="table-scroll">
+    <table id="files"><thead><tr><th>path</th><th>size MB</th><th>rows</th><th>time range UTC</th><th>venues</th><th>modified UTC</th></tr></thead><tbody></tbody></table>
+  </div>
 </section>
 
 </main>
@@ -169,7 +159,6 @@ async function refreshAll() {
   renderBacktests(backtests);
   renderFiles(files.slice(-8).reverse());
   renderPaperStatus(paper);
-  renderLastSession(sessions);
   renderCollectorDialog(venues);
 }
 
@@ -258,14 +247,6 @@ function renderCollectorDialog(venues) {
   });
 }
 
-function statusCell(status) {
-  const s = String(status || "unknown");
-  const cls = s === "ok" || s === "running" ? "ok" : s === "reconnecting" || s === "stale" ? "ping-warn" : "no";
-  const td = el("td", { className: cls });
-  td.textContent = s;
-  return td;
-}
-
 function renderCollections(rows) {
   fillTable("#collections", rows.slice(0, 8), r => [
     r.id,
@@ -303,12 +284,13 @@ function renderBacktests(rows) {
 }
 
 function renderFiles(rows) {
-  fillTable("#files", rows, f => [
-    f.path, f.size_mb, f.rows ?? "—",
-    f.ts_min ? `${utc(f.ts_min)} → ${utc(f.ts_max)}` : "—",
-    (f.venues || []).join(", "),
-    utc(f.modified),
-  ]);
+  fillTable("#files", rows, f => {
+    const vs = f.venues || [];
+    const venueStr = vs.length > 3 ? `${vs.slice(0, 3).join(", ")} +${vs.length - 3}` : vs.join(", ");
+    return [f.path, fmt(f.size_mb, 2), f.rows ?? "—",
+      f.ts_min ? `${utc(f.ts_min)} → ${utc(f.ts_max)}` : "—",
+      venueStr, utc(f.modified)];
+  });
 }
 
 function renderPaperStatus(paper) {
@@ -328,27 +310,6 @@ function renderPaperStatus(paper) {
     ["Last Signal", paper.last_signal_time ? utc(paper.last_signal_time) : "—"],
     ["Status", paper.blocked ? `blocked: ${paper.mode}` : "running"],
   ]);
-}
-
-function renderLastSession(sessions) {
-  const section = document.getElementById("lastSessionSection");
-  const latest = sessions && sessions[0];
-  if (!latest) {
-    fillCards("lastSessionCards", [["Status", "No sessions yet"]]);
-    document.getElementById("openSessionExplorer").classList.add("disabled");
-    document.getElementById("reanalyzeSession").disabled = true;
-    return;
-  }
-  fillCards("lastSessionCards", [
-    ["Session ID", linkTo(`explorer.html?session=${latest.id}`, latest.id)],
-    ["Events", `${latest.n_events || 0}`],
-    ["A / B / C", `${latest.n_signal_a || 0} / ${latest.n_signal_b || 0} / ${latest.n_signal_c || 0}`],
-    ["Date", latest.date || "—"],
-    ["Venues", `${latest.n_venues || 0}`],
-  ]);
-  document.getElementById("openSessionExplorer").href = `explorer.html?session=${latest.id}`;
-  document.getElementById("openSessionExplorer").classList.remove("disabled");
-  document.getElementById("reanalyzeSession").disabled = false;
 }
 
 async function runAnalysis(collectionId) {
@@ -396,11 +357,6 @@ document.getElementById("runAnalysisLatest").onclick = async () => {
   if (!latestCollections.length) return;
   await runAnalysis(latestCollections[0].id);
 };
-document.getElementById("reanalyzeSession").onclick = async () => {
-  if (!latestCollections.length) return;
-  await runAnalysis(latestCollections[0].id);
-};
-
 (async () => {
   try {
     await refreshAll();

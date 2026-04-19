@@ -57,9 +57,16 @@
   </div>
 </section>
 
+<div id="btDecision" class="decision-strip" hidden>
+  <span class="hint">Next step:</span>
+  <span id="btDecisionMsg">—</span>
+  <a id="btDecisionMc" class="button-link" href="#">Run Monte Carlo →</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="hint" style="margin-left:8px">← Improve in Notebook ↗</a>
+</div>
+
 <div id="lowSampleBanner" class="banner" hidden>
   Low-sample backtest: fewer than 20 trades. Results are not statistically meaningful.
-  <a id="lowSampleCta" class="button-link" href="#">Go back to Notebook to expand filters/data</a>
+  <a id="lowSampleCta" class="button-link" href="/leadlag-lab/lab/" target="_blank">Open Notebook to expand filters/data ↗</a>
 </div>
 
 <section id="detailCharts" hidden>
@@ -159,6 +166,7 @@ async function init() {
   setupTradeFilters();
   applyTradeFilters();
   renderLowSampleBanner();
+  renderBtDecision();
   document.getElementById("status").textContent = "";
 }
 
@@ -175,7 +183,7 @@ async function showList() {
     fmt(r.avg_trade_bps),
     pct(r.win_rate),
     fmt(r.sharpe),
-    linkTo(`montecarlo.html?backtest=${r.id}`, "open"),
+    r.has_montecarlo ? linkTo(`montecarlo.html?backtest=${r.id}`, "open") : linkTo(`montecarlo.html?backtest=${r.id}`, "run"),
   ]);
 }
 
@@ -420,13 +428,32 @@ document.querySelectorAll(".layerToggle").forEach(input => input.onchange = rend
 
 function renderLowSampleBanner() {
   const n = stats.n_trades || 0;
-  const banner = document.getElementById("lowSampleBanner");
+  document.getElementById("lowSampleBanner").hidden = n >= 20;
+}
+
+function renderBtDecision() {
+  const strip = document.getElementById("btDecision");
+  strip.hidden = false;
+  const net = Number(stats.total_net_pnl_bps || 0);
+  const sharpe = Number(stats.sharpe || 0);
+  const n = stats.n_trades || 0;
+  let msg, cls;
   if (n < 20) {
-    banner.hidden = false;
-    document.getElementById("lowSampleCta").href = `explorer.html?session=${meta.session_id || ""}`;
+    msg = "Too few trades — expand filters or collect more data in Notebook";
+    cls = "ping-warn";
+  } else if (net <= 0) {
+    msg = "Net negative — fees exceed edge. Refine entry logic in Notebook.";
+    cls = "no";
+  } else if (sharpe < 0.3) {
+    msg = "Edge exists but low Sharpe. Tighten filters in Notebook.";
+    cls = "ping-warn";
   } else {
-    banner.hidden = true;
+    msg = `Net +${net.toFixed(1)} bps, Sharpe ${sharpe.toFixed(2)} — results look solid, test robustness with Monte Carlo`;
+    cls = "ok";
   }
+  document.getElementById("btDecisionMsg").textContent = msg;
+  document.getElementById("btDecisionMsg").className = cls;
+  document.getElementById("btDecisionMc").href = `montecarlo.html?backtest=${btId}`;
 }
 
 (async () => {
