@@ -108,10 +108,16 @@ Workflow ноутбука (уже работает корректно в strateg
 
 ## Текущее состояние данных
 
-- **Session**: `20260417_121202_b8e21fab` — 30 мин, 22 events (7A/5B/10C)
+- **Session для тестирования**: `20260419_080345_b8e21fab` — 4 часа, **165 events**, 11 venues
+- **Session старая**: `20260417_121202_b8e21fab` — 30 мин, 22 events (для проверки low-sample warning)
 - **Strategies**: `baseline_signal_c`, `codex_manual_strategy_20260418`, `research_multi_signal_v1`
-- **research_multi_signal_v1**: Signals A+B+C, Lighter Perp + MEXC Perp, min_magnitude 1.5
-- **Collector**: работает, накапливает данные (rotation 30 мин)
+- **Готовый backtest**: `research_multi_signal_v1_20260419_123521` — **88 trades**, Net +115 bps, Win rate 63.6%, Sharpe 0.31
+- **Collector**: работает, накапливает данные
+
+Для полного тестирования пайплайна:
+- Explorer → открывай session `20260419_080345_b8e21fab`
+- Backtest → `research_multi_signal_v1_20260419_123521` уже готов (88 trades, достаточно для Monte Carlo)
+- Low-sample warning → тестируй на старой session `20260417_121202_b8e21fab` (1-2 trades)
 
 ---
 
