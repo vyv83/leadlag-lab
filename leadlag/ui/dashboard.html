@@ -17,7 +17,7 @@
   <a href="backtest.html">Backtests</a>
   <a href="montecarlo.html">Monte Carlo</a>
   <a href="paper.html">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Open Jupyter</a>
 </nav>
 </header>
 <main>
@@ -66,6 +66,27 @@
       <th>venue</th><th>role</th><th>status</th><th>ticks</th><th>ticks/s</th><th>BBO</th><th>BBO/s</th>
       <th>reconnects</th><th>last tick UTC</th><th>seconds idle</th><th>last price</th><th>last error</th>
     </tr></thead><tbody></tbody></table>
+    <dialog id="collectorDialog">
+      <h2>Start Collection</h2>
+      <div class="toolbar">
+        <label>Duration hours <input id="dashDurationHours" type="number" min="0.1" step="0.1" value="1"></label>
+        <label>Bin size ms <input id="dashBinSize" type="number" min="10" step="10" value="50"></label>
+        <label>Rotation minutes <input id="dashRotation" type="number" min="1" step="1" value="30"></label>
+      </div>
+      <div class="toolbar">
+        <button id="dashSelectLeaders">Select Leaders</button>
+        <button id="dashSelectFollowers">Select Followers</button>
+        <button id="dashSelectAll">Select All</button>
+        <button id="dashClearSelection">Clear</button>
+      </div>
+      <div class="table-scroll compact-dialog">
+        <table id="dashVenueSelection"><thead><tr><th>use</th><th>venue</th><th>role</th><th>BBO</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="toolbar">
+        <button id="dashStartNow">Start</button>
+        <button id="dashCancelStart">Cancel</button>
+      </div>
+    </dialog>
   </section>
 </div>
 
@@ -119,9 +140,10 @@
 <script src="app.js"></script>
 <script>
 let latestCollections = [];
+let dashboardVenues = [];
 
 async function refreshAll() {
-  const [sys, hist, pings, processes, collector, collections, sessions, backtests, files, paper, strategies] = await Promise.all([
+  const [sys, hist, pings, processes, collector, collections, sessions, backtests, files, paper, strategies, venues] = await Promise.all([
     fetchJSON("/api/system/stats"),
     fetchJSON("/api/system/history?minutes=60"),
     fetchJSON("/api/system/pings"),
@@ -133,8 +155,10 @@ async function refreshAll() {
     fetchJSON("/api/system/files"),
     fetchJSON("/api/paper/status"),
     fetchJSON("/api/strategies"),
+    fetchJSON("/api/venues"),
   ]);
   latestCollections = collections;
+  dashboardVenues = venues;
   renderTop(sys, collector, paper, collections, sessions, backtests, strategies);
   renderSystem(sys, hist);
   renderProcesses(processes);
@@ -146,6 +170,7 @@ async function refreshAll() {
   renderFiles(files.slice(-8).reverse());
   renderPaperStatus(paper);
   renderLastSession(sessions);
+  renderCollectorDialog(venues);
 }
 
 function renderTop(sys, collector, paper, collections, sessions, backtests, strategies) {
@@ -204,9 +229,27 @@ function renderCollector(st) {
   document.getElementById("stopCollector").disabled = !st.running && !st.proc_alive;
   document.getElementById("clearStale").hidden = !st.stale;
   fillTable("#collectorVenues", st.venues || [], r => [
-    r.name, r.role, st.stale ? `stale (${r.status})` : r.status, r.ticks, fmt(r.ticks_per_s_1m), r.bbo, fmt(r.bbo_per_s),
+    r.name, r.role, statusCell(st.stale ? "stale" : r.status), r.ticks, fmt(r.ticks_per_s_1m), r.bbo, fmt(r.bbo_per_s),
     r.reconnects, utc(r.last_tick_ts), fmt(r.seconds_since_last_tick), fmt(r.last_price, 2), r.last_error || "",
   ]);
+}
+
+function renderCollectorDialog(venues) {
+  const tbody = document.querySelector("#dashVenueSelection tbody");
+  if (!tbody || tbody.children.length) return;
+  venues.forEach(v => {
+    const tr = el("tr");
+    tr.innerHTML = `<td><input class="dashVenueCheck" type="checkbox" value="${v.name}" ${v.enabled ? "checked" : ""}></td><td>${v.name}</td><td>${v.role}</td><td>${naMark(v.bbo_available)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function statusCell(status) {
+  const s = String(status || "unknown");
+  const cls = s === "ok" || s === "running" ? "ok" : s === "reconnecting" || s === "stale" ? "ping-warn" : "no";
+  const td = el("td", { className: cls });
+  td.textContent = s;
+  return td;
 }
 
 function renderCollections(rows) {
@@ -302,8 +345,29 @@ async function runAnalysis(collectionId) {
   location.href = `explorer.html?session=${res.session_id}`;
 }
 
-document.getElementById("startCollector").onclick = async () => {
-  await postJSON("/api/collector/start", { duration_s: 3600, venues: [], bin_size_ms: 50, rotation_s: 1800 });
+function dashSelectedVenues() {
+  return [...document.querySelectorAll(".dashVenueCheck:checked")].map(i => i.value);
+}
+function dashSetVenueChecks(fn) {
+  document.querySelectorAll(".dashVenueCheck").forEach(input => {
+    const venue = dashboardVenues.find(v => v.name === input.value);
+    input.checked = !!venue && fn(venue);
+  });
+}
+document.getElementById("startCollector").onclick = () => document.getElementById("collectorDialog").showModal();
+document.getElementById("dashCancelStart").onclick = () => document.getElementById("collectorDialog").close();
+document.getElementById("dashSelectLeaders").onclick = () => dashSetVenueChecks(v => v.role === "leader");
+document.getElementById("dashSelectFollowers").onclick = () => dashSetVenueChecks(v => v.role === "follower");
+document.getElementById("dashSelectAll").onclick = () => dashSetVenueChecks(() => true);
+document.getElementById("dashClearSelection").onclick = () => dashSetVenueChecks(() => false);
+document.getElementById("dashStartNow").onclick = async () => {
+  await postJSON("/api/collector/start", {
+    duration_s: Math.round(Number(document.getElementById("dashDurationHours").value || 1) * 3600),
+    venues: dashSelectedVenues(),
+    bin_size_ms: Number(document.getElementById("dashBinSize").value || 50),
+    rotation_s: Number(document.getElementById("dashRotation").value || 30) * 60,
+  });
+  document.getElementById("collectorDialog").close();
   refreshAll();
 };
 document.getElementById("stopCollector").onclick = async () => {

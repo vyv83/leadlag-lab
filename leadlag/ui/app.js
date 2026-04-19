@@ -119,7 +119,7 @@ const PLOT_LAYOUT = {
 };
 const PLOT_CFG = {
   responsive: true,
-  displayModeBar: "hover",
+  displayModeBar: true,
   displaylogo: false,
   modeBarButtons: [["zoomIn2d", "zoomOut2d", "resetScale2d"]],
 };
@@ -161,7 +161,9 @@ function dirArrow(direction) {
 function checkMark(v) { return v ? '<span class="ok">✓</span>' : '<span class="no">✗</span>'; }
 function naMark(v) { return v ? '<span class="ok">✓</span>' : '<span class="na">—</span>'; }
 function setValueContent(node, value) {
-  if (typeof value === "string" && /^<span class="(ok|no|na|sig|dir-)/.test(value)) {
+  if (value instanceof Node) {
+    node.appendChild(value);
+  } else if (typeof value === "string" && /^<span class="(ok|no|na|sig|dir-)/.test(value)) {
     node.innerHTML = value;
   } else {
     node.textContent = String(value);

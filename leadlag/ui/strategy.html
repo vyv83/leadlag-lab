@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>leadlag — strategies</title>
 <link rel="stylesheet" href="style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
 <header><h1>leadlag</h1>
@@ -23,13 +24,26 @@
 <section>
   <h2>Strategies</h2>
   <div id="status" class="muted">Loading...</div>
+  <div class="toolbar">
+    <button id="compareBtn">Compare Selected</button>
+    <span class="muted">Notebook remains the lab; this screen runs and compares saved strategy files.</span>
+  </div>
   <div class="table-scroll">
     <table id="strategies"><thead><tr>
       <th></th><th>name</th><th>ver</th><th>valid</th><th>description</th>
       <th>venue</th><th>signal</th><th>entry</th><th>slippage</th><th>position</th>
+      <th>last net</th><th>trades</th><th>win</th><th>sharpe</th><th>status</th>
       <th>actions</th>
     </tr></thead><tbody></tbody></table>
   </div>
+</section>
+
+<section id="compareSection" hidden>
+  <h2>Strategy Comparison</h2>
+  <div class="chart" id="compareChart"></div>
+  <table id="compareTable"><thead><tr>
+    <th>strategy</th><th>backtest</th><th>net</th><th>avg trade</th><th>trades</th><th>win</th><th>sharpe</th><th>max DD</th><th>MC</th>
+  </tr></thead><tbody></tbody></table>
 </section>
 
 <section>
@@ -81,9 +95,10 @@ let sessions = [];
 let backtests = [];
 
 function btSummary(stratName) {
-  const bt = backtests.find(b => b.strategy === stratName);
-  if (!bt) return null;
-  return bt;
+  const candidates = backtests.filter(b => b.strategy === stratName);
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
+  return candidates[candidates.length - 1];
 }
 
 async function loadAll() {
@@ -106,9 +121,10 @@ function renderTable(strats) {
     const tr = el("tr");
     const bt = btSummary(s.name);
     const p = s.params || {};
-    const signals = p.signal ? [p.signal] : (p.signals || []);
-    const venue = p.follower || p.venue || "—";
-    const trHTML = (val) => `<td>${val}</td>`;
+    const latest = s.last_backtest_summary || bt;
+    const signals = s.signal_type?.length ? s.signal_type : (p.signal ? [p.signal] : (p.signals || []));
+    const venues = s.venues?.length ? s.venues : (p.follower ? [p.follower] : p.venue ? [p.venue] : []);
+    const venue = venues.length > 3 ? `${venues.slice(0, 3).join(", ")} +${venues.length - 3}` : (venues.join(", ") || "—");
 
     // checkbox for compare
     const td0 = el("td");
@@ -149,20 +165,45 @@ function renderTable(strats) {
 
     // entry type
     const td7 = el("td");
-    td7.textContent = p.entry_type || "market";
+    td7.textContent = s.entry_type || p.entry_type || "market";
     tr.appendChild(td7);
 
     // slippage
     const td8 = el("td");
-    td8.textContent = p.slippage_model || "—";
+    td8.textContent = s.slippage_model || p.slippage_model || "—";
     td8.className = "muted";
     tr.appendChild(td8);
 
     // position mode
     const td9 = el("td");
-    td9.textContent = p.position_mode || "reject";
+    td9.textContent = s.position_mode || p.position_mode || "reject";
     td9.className = "muted";
     tr.appendChild(td9);
+
+    const tdLastNet = el("td");
+    tdLastNet.textContent = latest ? signed(Number(latest.total_net_pnl_bps || 0)) : "—";
+    tdLastNet.className = latest && Number(latest.total_net_pnl_bps || 0) >= 0 ? "ok" : latest ? "no" : "muted";
+    tr.appendChild(tdLastNet);
+
+    const tdTrades = el("td");
+    tdTrades.textContent = latest ? latest.n_trades : "—";
+    tr.appendChild(tdTrades);
+
+    const tdWin = el("td");
+    tdWin.textContent = latest ? pct(latest.win_rate) : "—";
+    tr.appendChild(tdWin);
+
+    const tdSharpe = el("td");
+    tdSharpe.textContent = latest ? fmt(latest.sharpe) : "—";
+    tr.appendChild(tdSharpe);
+
+    const tdStatus = el("td");
+    tdStatus.innerHTML = [
+      s.has_backtest ? '<span class="ok">BT</span>' : '<span class="na">BT</span>',
+      s.has_paper ? '<span class="ok">Paper</span>' : '<span class="na">Paper</span>',
+      s.has_live ? '<span class="ok">Live</span>' : '<span class="na">Live</span>',
+    ].join(" ");
+    tr.appendChild(tdStatus);
 
     // actions
     const td10 = el("td");
@@ -170,8 +211,8 @@ function renderTable(strats) {
     const runBtn = el("button", { onclick: () => quickBacktest(s.name) }, ["▶"]);
     runBtn.title = "Run Backtest";
     td10.appendChild(runBtn);
-    if (bt) {
-      td10.appendChild(el("a", { href: `backtest.html?id=${bt.id}`, class: "button-link", style: "margin-left:4px" }, ["view"]));
+    if (latest) {
+      td10.appendChild(el("a", { href: `backtest.html?id=${latest.id}`, class: "button-link", style: "margin-left:4px" }, ["view"]));
       td10.appendChild(el("a", { href: `paper.html`, class: "button-link", style: "margin-left:4px" }, ["paper"]));
     }
     const delBtn = el("button", { onclick: () => deleteStrat(s.name), style: "margin-left:4px;color:#f85149" }, ["×"]);
@@ -180,12 +221,45 @@ function renderTable(strats) {
     tr.appendChild(td10);
 
     // last backtest row highlight
-    if (bt) {
-      tr.title = `Last: ${signed(Number(bt.total_net_pnl_bps || 0))} bps, ${bt.n_trades} trades, win ${pct(bt.win_rate)}`;
+    if (latest) {
+      tr.title = `Last: ${signed(Number(latest.total_net_pnl_bps || 0))} bps, ${latest.n_trades} trades, win ${pct(latest.win_rate)}`;
     }
 
     tbody.appendChild(tr);
   });
+}
+
+async function compareSelected() {
+  const names = [...document.querySelectorAll(".compareCheck:checked")].map(i => i.value).slice(0, 5);
+  if (names.length < 2) return alert("Select 2-5 strategies to compare");
+  const rows = names.map(name => ({ name, bt: btSummary(name) })).filter(r => r.bt);
+  if (rows.length < 2) return alert("Selected strategies need saved backtests");
+  document.getElementById("compareSection").hidden = false;
+  fillTable("#compareTable", rows, r => [
+    r.name,
+    linkTo(`backtest.html?id=${r.bt.id}`, r.bt.id),
+    signed(Number(r.bt.total_net_pnl_bps || 0)),
+    signed(Number(r.bt.avg_trade_bps || 0)),
+    r.bt.n_trades,
+    pct(r.bt.win_rate),
+    fmt(r.bt.sharpe),
+    fmt(r.bt.max_drawdown_bps),
+    r.bt.has_montecarlo ? linkTo(`montecarlo.html?backtest=${r.bt.id}`, "open") : linkTo(`montecarlo.html?backtest=${r.bt.id}`, "run"),
+  ]);
+  const traces = await Promise.all(rows.map(async r => {
+    const equity = await fetchJSON(`/api/backtests/${r.bt.id}/equity`);
+    return {
+      x: equity.map((_, i) => i + 1),
+      y: equity.map(e => e.net_equity_bps),
+      mode: "lines",
+      name: r.name,
+    };
+  }));
+  Plotly.react("compareChart", traces, {
+    ...PLOT_LAYOUT,
+    xaxis: { title: "trade #" },
+    yaxis: { title: "net cumulative bps" },
+  }, PLOT_CFG);
 }
 
 function fillSelectors(strats, sess) {
@@ -201,6 +275,12 @@ function fillSelectors(strats, sess) {
   });
   const fs = document.getElementById("sFollower");
   fs.innerHTML = (followers.size ? [...followers] : ["Lighter Perp"]).map(v => `<option>${v}</option>`).join("");
+}
+
+function safeClassName(name) {
+  const cleaned = name.replace(/[^a-zA-Z0-9_]/g, "_");
+  const prefixed = /^[A-Za-z_]/.test(cleaned) ? cleaned : `Strategy_${cleaned}`;
+  return prefixed.split("_").filter(Boolean).map(part => part.charAt(0).toUpperCase() + part.slice(1)).join("");
 }
 
 async function quickBacktest(name) {
@@ -250,10 +330,11 @@ document.getElementById("createBtn").onclick = async () => {
   const signalCheckCode = signals.length === 1
     ? `if event.signal != '${signals[0]}': return None`
     : `if event.signal not in ${JSON.stringify(signals)}: return None`;
+  const className = safeClassName(name);
 
   const code = `from leadlag import Strategy, Order
 
-class ${name.replace(/[^a-zA-Z0-9_]/g, '_').charAt(0).toUpperCase() + name.slice(1).replace(/[^a-zA-Z0-9_]/g, '_')}(Strategy):
+class ${className}(Strategy):
     name = "${name}"
     version = "${new Date().toISOString().slice(0, 10)}"
     description = "Simple strategy: ${signals.join('+')} on ${follower}"
@@ -268,6 +349,8 @@ class ${name.replace(/[^a-zA-Z0-9_]/g, '_').charAt(0).toUpperCase() + name.slice
         "position_mode": "${positionMode}",
         "qty_btc": ${Number(qtyBtc)},
     }
+    slippage_model = "${slippageModel}"
+    position_mode = "${positionMode}"
 
     def on_event(self, event, ctx):
         ${signalCheckCode}
@@ -294,6 +377,8 @@ class ${name.replace(/[^a-zA-Z0-9_]/g, '_').charAt(0).toUpperCase() + name.slice
     document.getElementById("createResult").textContent = `Error: ${err.message}`;
   }
 };
+
+document.getElementById("compareBtn").onclick = compareSelected;
 
 (async () => {
   try { await loadAll(); } catch (err) { showError("#status", err); }

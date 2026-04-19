@@ -5,6 +5,7 @@
 <title>leadlag - data quality</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<!-- Plotly mode bar is enabled globally in app.js: displayModeBar: true -->
 </head>
 <body>
 <header><h1>leadlag</h1>
@@ -51,6 +52,8 @@
     <div class="chart small" id="ticksChart"></div>
     <div class="chart small" id="bboSpreadChart"></div>
     <div class="chart small" id="priceDevChart"></div>
+    <div class="chart small" id="qualityHeatmap"></div>
+    <div class="chart small" id="gapTimeline"></div>
   </div>
 </section>
 
@@ -138,6 +141,55 @@ function renderCharts() {
   bar("ticksChart", venues, rows.map(r => r.ticks_per_s_avg), "Ticks/s avg", "ticks/s");
   bar("bboSpreadChart", venues, rows.map(r => r.bbo_p95_spread_bps), "BBO spread p95", "bps");
   bar("priceDevChart", venues, rows.map(r => r.price_deviation_from_leader_bps), "Price deviation from leader", "bps");
+  renderQualityHeatmap(venues);
+  renderGapTimeline(payload.quality || {});
+}
+
+function renderQualityHeatmap(venues) {
+  const metrics = [
+    ["bin coverage", r => r.bin_coverage_pct],
+    ["BBO coverage", r => r.bbo_coverage_pct],
+    ["uptime", r => r.uptime_pct],
+  ];
+  Plotly.react("qualityHeatmap", [{
+    x: venues,
+    y: metrics.map(m => m[0]),
+    z: metrics.map(m => rows.map(r => Number(m[1](r) || 0))),
+    type: "heatmap",
+    colorscale: [[0, "#f85149"], [0.6, "#d29922"], [1, "#3fb950"]],
+    zmin: 0,
+    zmax: 100,
+  }], {
+    ...PLOT_LAYOUT,
+    title: { text: "Coverage heatmap" },
+    margin: { t: 44, l: 75, r: 20, b: 70 },
+    xaxis: { tickangle: -35 },
+  }, PLOT_CFG);
+}
+
+function renderGapTimeline(q) {
+  const gaps = q.timeline_gaps || [];
+  const venues = [...new Set([...(rows.map(r => r.venue)), ...gaps.map(g => g.venue)])];
+  if (!gaps.length) {
+    Plotly.react("gapTimeline", [{ x: venues, y: venues.map(() => 1), type: "bar", marker: { color: "#3fb950" }, name: "no gaps" }], {
+      ...PLOT_LAYOUT, title: { text: "Timeline gaps" }, xaxis: { tickangle: -35 }, yaxis: { title: "ok" },
+    }, PLOT_CFG);
+    return;
+  }
+  Plotly.react("gapTimeline", [{
+    x: gaps.map(g => new Date(Number(g.start_ms))),
+    y: gaps.map(g => g.venue),
+    mode: "markers",
+    type: "scatter",
+    marker: { color: "#f85149", size: gaps.map(g => Math.max(6, Math.min(28, Number(g.duration_s || 0) / 2))) },
+    text: gaps.map(g => `${g.venue}: ${fmt(g.duration_s)}s`),
+    name: "gaps",
+  }], {
+    ...PLOT_LAYOUT,
+    title: { text: "Timeline gaps" },
+    xaxis: { title: "UTC" },
+    yaxis: { title: "venue" },
+  }, PLOT_CFG);
 }
 
 function bar(id, x, y, title, yTitle) {

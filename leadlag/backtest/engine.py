@@ -85,6 +85,8 @@ class BacktestResult:
         if layers:
             fig.add_trace(go.Scatter(x=xs, y=df["gross_equity_bps"], mode="lines", name="Gross"))
             fig.add_trace(go.Scatter(x=xs, y=df["post_fee_equity_bps"], mode="lines", name="Gross - Fees"))
+            slip_col = "post_slippage_equity_bps" if "post_slippage_equity_bps" in df else "net_equity_bps"
+            fig.add_trace(go.Scatter(x=xs, y=df[slip_col], mode="lines", name="Gross - Fees - Slippage"))
         fig.add_trace(go.Scatter(x=xs, y=df["net_equity_bps"], mode="lines+markers", name="Net"))
         fig.add_trace(go.Scatter(x=xs, y=df["drawdown_bps"], mode="lines", fill="tozeroy", name="Drawdown", yaxis="y2"))
         fig.update_layout(yaxis=dict(domain=[0.30, 1.0]), yaxis2=dict(domain=[0.0, 0.20], title="drawdown bps"))
@@ -322,19 +324,33 @@ def _bbo_context_at(lookup: _BboLookup, ts_ms: int) -> dict[str, BboSnapshot]:
 
 
 def _to_event(row: dict) -> Event:
+    known = {
+        "event_id", "bin_idx", "ts_ms", "time_utc", "signal", "direction",
+        "magnitude_sigma", "leader", "leader_dev", "anchor_leader",
+        "confirmer_leader", "confirmer_bin", "confirmer_lag_ms",
+        "lagging_followers", "n_lagging", "follower_metrics", "grid_results",
+        "quality_flags_at_event",
+    }
     return Event(
+        event_id=row.get("event_id"),
         bin_idx=int(row["bin_idx"]),
         ts_ms=int(row.get("ts_ms", 0)),
+        time_utc=row.get("time_utc"),
         signal=row.get("signal", ""),
         direction=int(row.get("direction", 0)),
         magnitude_sigma=float(row.get("magnitude_sigma", 0.0)),
         leader=row.get("leader", ""),
+        leader_dev=row.get("leader_dev"),
+        anchor_leader=row.get("anchor_leader"),
+        confirmer_leader=row.get("confirmer_leader"),
+        confirmer_bin=row.get("confirmer_bin"),
+        confirmer_lag_ms=row.get("confirmer_lag_ms"),
         lagging_followers=list(row.get("lagging_followers", [])),
+        n_lagging=row.get("n_lagging"),
         follower_metrics=row.get("follower_metrics", {}),
-        extra={k: v for k, v in row.items() if k not in {
-            "bin_idx", "ts_ms", "signal", "direction", "magnitude_sigma",
-            "leader", "lagging_followers", "follower_metrics",
-        }},
+        grid_results=row.get("grid_results", {}),
+        quality_flags_at_event=list(row.get("quality_flags_at_event", [])),
+        extra={k: v for k, v in row.items() if k not in known},
     )
 
 
@@ -558,6 +574,7 @@ def _force_close_trade(
         "mae_bps": mae_bps,
         "mfe_time_ms": mfe_time_ms,
         "mae_time_ms": mae_time_ms,
+        "entry_to_mfe_time_ms": mfe_time_ms,
         "bbo_spread_at_exit_bps": spread_exit,
         "_exit_bin_idx": exit_bin,
     })
@@ -571,16 +588,18 @@ def _ts_at(vwap_df: pd.DataFrame, bin_idx: int, fallback: int) -> int:
 
 def _build_equity(trades: list[dict]) -> list[dict]:
     rows: list[dict] = []
-    gross, post_fee, net, peak = 0.0, 0.0, 0.0, 0.0
+    gross, post_fee, post_slippage, net, peak = 0.0, 0.0, 0.0, 0.0, 0.0
     for t in sorted(trades, key=lambda x: x["exit_ts_ms"]):
         gross += t["gross_pnl_bps"]
         post_fee += t["gross_pnl_bps"] - t["fee_total_bps"]
+        post_slippage += t["gross_pnl_bps"] - t["fee_total_bps"] - t["slippage_total_bps"]
         net += t["net_pnl_bps"]
         peak = max(peak, net)
         rows.append({
             "ts_ms": t["exit_ts_ms"],
             "gross_equity_bps": gross,
             "post_fee_equity_bps": post_fee,
+            "post_slippage_equity_bps": post_slippage,
             "net_equity_bps": net,
             "drawdown_bps": net - peak,
             "trade_id": t["trade_id"],
@@ -686,9 +705,28 @@ def _empty_stats(n_errors: int, n_skipped_position: int, n_limit_attempts: int, 
         "fee_pct_of_gross": None,
         "slippage_pct_of_gross": None,
         "avg_trade_bps": 0.0,
+        "median_trade_bps": 0.0,
+        "std_trade_bps": 0.0,
         "profit_factor": None,
         "sharpe": 0.0,
         "max_drawdown_bps": 0.0,
+        "max_dd_duration_ms": 0,
+        "avg_win_bps": None,
+        "avg_loss_bps": None,
+        "best_trade_bps": None,
+        "worst_trade_bps": None,
+        "avg_hold_ms": None,
+        "avg_mfe_bps": None,
+        "avg_mae_bps": None,
+        "mfe_mae_ratio": None,
+        "trades_per_hour": 0.0,
+        "max_consec_wins": 0,
+        "max_consec_losses": 0,
+        "consecutive_wins": 0,
+        "consecutive_losses": 0,
+        "avg_spread_at_entry_bps": None,
+        "avg_slippage_bps": None,
+        "fee_impact": {"gross_bps": 0.0, "fees_bps": 0.0, "slippage_bps": 0.0, "net_bps": 0.0},
         "by_signal": {},
         "by_venue": {},
         "by_direction": {},

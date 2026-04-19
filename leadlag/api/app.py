@@ -166,6 +166,9 @@ def list_strategies():
         try:
             s = load_strategy(str(p))
             params = getattr(s, "params", {})
+            entry_type = params.get("entry_type", getattr(s, "entry_type", "market"))
+            slippage_model = params.get("slippage_model", getattr(s, "slippage_model", "half_spread"))
+            position_mode = params.get("position_mode", getattr(s, "position_mode", "reject"))
             entry.update({
                 "class_name": s.__class__.__name__,
                 "description": getattr(s, "description", ""),
@@ -173,6 +176,9 @@ def list_strategies():
                 "version": getattr(s, "version", ""),
                 "venues": _extract_venues(params),
                 "signal_type": _extract_signal_type(params),
+                "entry_type": entry_type,
+                "slippage_model": slippage_model,
+                "position_mode": position_mode,
             })
         except Exception as e:
             entry["valid"] = False
@@ -309,6 +315,8 @@ def backtest_run(body: dict = Body(...)):
         raise HTTPException(400, {"error": "strategy_not_found", "path": str(strategy_path)})
     try:
         strategy = load_strategy(str(strategy_path))
+        if getattr(strategy, "name", "") in ("", "UnnamedStrategy"):
+            strategy.name = name
     except Exception as e:
         raise HTTPException(400, {"error": "strategy_load_failed", "type": type(e).__name__, "message": str(e)})
     try:
@@ -739,9 +747,11 @@ def _last_backtest_summary(strategy_name: str) -> Optional[dict]:
                 "date": date_str,
                 "n_trades": stats.get("n_trades", 0),
                 "total_net_pnl_bps": stats.get("total_net_pnl_bps", 0.0),
+                "avg_trade_bps": stats.get("avg_trade_bps", 0.0),
                 "win_rate": stats.get("win_rate", 0.0),
                 "sharpe": stats.get("sharpe", 0.0),
-                "avg_trade_bps": stats.get("avg_trade_bps", 0.0),
+                "max_drawdown_bps": stats.get("max_drawdown_bps", 0.0),
+                "has_montecarlo": (d / "montecarlo.json").exists(),
             }
     return best
 

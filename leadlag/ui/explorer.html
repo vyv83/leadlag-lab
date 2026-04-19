@@ -5,6 +5,7 @@
 <title>leadlag - explorer</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<!-- Plotly mode bar is enabled globally in app.js: displayModeBar: true -->
 </head>
 <body>
 <header><h1>leadlag</h1>
@@ -58,6 +59,7 @@
     <button id="prevEvent">Prev Event</button>
     <button id="nextEvent">Next Event</button>
     <label><input id="showBbo" type="checkbox" checked> Show BBO Overlay</label>
+    <label><input id="showEma" type="checkbox"> Show EMA baseline</label>
     <label><input id="showAllFollowers" type="checkbox"> Show All Followers</label>
     <a id="openTrade" class="button-link" href="#" hidden>Open Trade</a>
     <a id="viewBacktest" class="button-link" href="#" hidden>View Backtest</a>
@@ -263,6 +265,7 @@ function renderChart() {
     });
   }
   addBboOverlay(traces, priceWindow, selectedDetail.bbo_window, rel, follower);
+  addEmaOverlay(traces, priceWindow, selectedDetail.ema_window, rel, follower, leaderVenues);
   addEventShapes(shapes, annotations, follower);
   const layout = {
     ...PLOT_LAYOUT,
@@ -303,6 +306,21 @@ function addBboOverlay(traces, priceWindow, bboWindow, rel, follower) {
   traces.push({ x: rel, y: bbo.spread_bps || [], name: "spread bps", mode: "lines", type: "scatter", yaxis: "y3", line: { color: "#f78166", width: 1, dash: "dot" } });
 }
 
+function addEmaOverlay(traces, priceWindow, emaWindow, rel, follower, leaderVenues) {
+  if (!document.getElementById("showEma").checked || !emaWindow || !emaWindow.venues) return;
+  (leaderVenues || []).forEach(venue => {
+    const ema = emaWindow.venues[venue];
+    const prices = priceWindow.venues[venue];
+    if (!ema || !prices) return;
+    traces.push({ x: rel, y: priceToBps(ema, valueAtZero(prices, rel)), name: `${venue} EMA`, mode: "lines", type: "scatter", yaxis: "y", line: { color: "#8b949e", width: 1, dash: "dash" } });
+  });
+  const ema = emaWindow.venues[follower];
+  const prices = priceWindow.venues[follower];
+  if (ema && prices) {
+    traces.push({ x: rel, y: priceToBps(ema, valueAtZero(prices, rel)), name: `${follower} EMA`, mode: "lines", type: "scatter", yaxis: "y2", line: { color: "#8b949e", width: 1, dash: "dash" } });
+  }
+}
+
 function addEventShapes(shapes, annotations, follower) {
   shapes.push(vline(0, "#f85149", "dash"));
   shapes.push({ type: "rect", xref: "x", yref: "paper", x0: -10000, x1: 0, y0: 0, y1: 1, fillcolor: "rgba(248,81,73,0.08)", line: { width: 0 } });
@@ -327,6 +345,24 @@ function addEventShapes(shapes, annotations, follower) {
     annotations.push(labelAt(exitRel, `EXIT ${fmt(Number(t.exit_price_exec), 2)}`));
     if (t.mfe_time_ms !== null) annotations.push(labelAt(entryRel + Number(t.mfe_time_ms), `MFE ${signed(Number(t.mfe_bps))}`));
     if (t.mae_time_ms !== null) annotations.push(labelAt(entryRel + Number(t.mae_time_ms), `MAE ${signed(Number(t.mae_bps))}`));
+    addRiskLines(shapes, annotations, t, selectedDetail.price_window, follower, entryRel, exitRel);
+  }
+}
+
+function addRiskLines(shapes, annotations, trade, priceWindow, follower, entryRel, exitRel) {
+  const base = valueAtZero((priceWindow.venues || {})[follower] || [], priceWindow.rel_times_ms || []);
+  if (!base) return;
+  const sign = trade.side === "sell" ? -1 : 1;
+  const entryBps = (Number(trade.entry_price_exec) / base - 1) * 10000;
+  if (trade.stop_loss_bps !== null && trade.stop_loss_bps !== undefined) {
+    const y = entryBps - sign * Math.abs(Number(trade.stop_loss_bps));
+    shapes.push(hline(y, entryRel, exitRel, "#f85149"));
+    annotations.push(labelAt(entryRel, `SL ${fmt(Number(trade.stop_loss_bps))} bps`));
+  }
+  if (trade.take_profit_bps !== null && trade.take_profit_bps !== undefined) {
+    const y = entryBps + sign * Math.abs(Number(trade.take_profit_bps));
+    shapes.push(hline(y, entryRel, exitRel, "#3fb950"));
+    annotations.push(labelAt(entryRel, `TP ${fmt(Number(trade.take_profit_bps))} bps`));
   }
 }
 
@@ -398,6 +434,9 @@ function vline(x, color, dash) {
 function labelAt(x, text) {
   return { x, y: 1.0, xref: "x", yref: "paper", text, showarrow: false, yanchor: "bottom", font: { size: 11 } };
 }
+function hline(y, x0, x1, color) {
+  return { type: "line", xref: "x", yref: "y2", x0, x1, y0: y, y1: y, line: { color, width: 1, dash: "dash" } };
+}
 function eventIndex() {
   return filteredEvents.findIndex(e => Number(e.bin_idx) === Number(selectedBin));
 }
@@ -427,6 +466,7 @@ document.getElementById("chartFollower").onchange = () => {
   if (selectedEvent) renderFollowersTable();
 };
 document.getElementById("showBbo").onchange = renderChart;
+document.getElementById("showEma").onchange = renderChart;
 document.getElementById("showAllFollowers").onchange = renderChart;
 document.getElementById("prevEvent").onclick = () => moveEvent(-1);
 document.getElementById("nextEvent").onclick = () => moveEvent(1);

@@ -123,6 +123,14 @@ aside { border-left: 1px solid #21262d; padding-left: 10px; }
 
 /* ── Table Scroll ── */
 .table-scroll { max-height: 480px; overflow: auto; border: 1px solid #21262d; }
+.table-scroll.compact-dialog { max-height: 300px; }
+dialog {
+  color: #c9d1d9; background: #0e1117; border: 1px solid #30363d; border-radius: 4px;
+  max-width: min(760px, 96vw);
+}
+dialog::backdrop { background: rgba(0,0,0,0.55); }
+.spark-cell { min-width: 72px; position: relative; display: grid; gap: 2px; }
+.spark-bar { display: block; height: 3px; background: #58a6ff; border-radius: 2px; opacity: 0.8; }
 
 /* ── Row Colors ── */
 .profit-row td { background: rgba(63,185,80,0.04); }

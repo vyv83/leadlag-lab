@@ -5,6 +5,7 @@
 <title>leadlag - trade</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<!-- Plotly mode bar is enabled globally in app.js: displayModeBar: true -->
 </head>
 <body>
 <header><h1>leadlag</h1>
@@ -172,12 +173,7 @@ function renderChart() {
   annotations.push(label(exitRel, `EXIT ${fmt(t.exit_price_exec, 2)} - ${t.exit_reason}`));
   if (hasExcursion(t.mfe_bps, t.mfe_time_ms)) annotations.push(label(entryRel + Number(t.mfe_time_ms), `MFE ${signed(Number(t.mfe_bps))}`));
   if (hasExcursion(t.mae_bps, t.mae_time_ms)) annotations.push(label(entryRel + Number(t.mae_time_ms), `MAE ${signed(Number(t.mae_bps))}`));
-  if (t.stop_loss_bps !== null && t.stop_loss_bps !== undefined) {
-    annotations.push(label(entryRel, `SL ${fmt(t.stop_loss_bps)} bps`));
-  }
-  if (t.take_profit_bps !== null && t.take_profit_bps !== undefined) {
-    annotations.push(label(entryRel, `TP ${fmt(t.take_profit_bps)} bps`));
-  }
+  addRiskLines(shapes, annotations, t, priceWindow, rel, entryRel, exitRel);
   if (event.signal === "C" && event.confirmer_lag_ms !== null && event.confirmer_lag_ms !== undefined) {
     annotations.push(label(Number(event.confirmer_lag_ms), `confirmer lag ${event.confirmer_lag_ms}ms`));
   }
@@ -226,8 +222,27 @@ function valueAtZero(values, rel) {
 function vline(x, color, dash) {
   return { type: "line", xref: "x", yref: "paper", x0: x, x1: x, y0: 0, y1: 1, line: { color, width: 1, dash } };
 }
+function hline(y, x0, x1, color) {
+  return { type: "line", xref: "x", yref: "y2", x0, x1, y0: y, y1: y, line: { color, width: 1, dash: "dash" } };
+}
 function label(x, text) {
   return { x, y: 1.0, xref: "x", yref: "paper", text, showarrow: false, yanchor: "bottom", font: { size: 11 } };
+}
+function addRiskLines(shapes, annotations, trade, priceWindow, rel, entryRel, exitRel) {
+  const base = valueAtZero((priceWindow.venues || {})[trade.venue] || [], rel);
+  if (!base) return;
+  const sign = trade.side === "sell" ? -1 : 1;
+  const entryBps = (Number(trade.entry_price_exec) / base - 1) * 10000;
+  if (trade.stop_loss_bps !== null && trade.stop_loss_bps !== undefined) {
+    const y = entryBps - sign * Math.abs(Number(trade.stop_loss_bps));
+    shapes.push(hline(y, entryRel, exitRel, "#f85149"));
+    annotations.push(label(entryRel, `SL ${fmt(Number(trade.stop_loss_bps))} bps`));
+  }
+  if (trade.take_profit_bps !== null && trade.take_profit_bps !== undefined) {
+    const y = entryBps + sign * Math.abs(Number(trade.take_profit_bps));
+    shapes.push(hline(y, entryRel, exitRel, "#3fb950"));
+    annotations.push(label(entryRel, `TP ${fmt(Number(trade.take_profit_bps))} bps`));
+  }
 }
 function hasExcursion(value, timeMs) {
   return Number.isFinite(Number(value)) && Number.isFinite(Number(timeMs)) && !(Number(value) === 0 && Number(timeMs) === 0);

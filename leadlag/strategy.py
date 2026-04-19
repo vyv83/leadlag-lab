@@ -30,7 +30,17 @@ class Event:
     magnitude_sigma: float
     leader: str
     lagging_followers: list[str]
+    event_id: Optional[int] = None
+    time_utc: Optional[str] = None
+    leader_dev: Optional[float] = None
+    anchor_leader: Optional[str] = None
+    confirmer_leader: Optional[str] = None
+    confirmer_bin: Optional[int] = None
+    confirmer_lag_ms: Optional[int] = None
+    n_lagging: Optional[int] = None
     follower_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
+    grid_results: dict[str, Any] = field(default_factory=dict)
+    quality_flags_at_event: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -68,6 +78,8 @@ class Strategy:
     """
 
     name: str = "UnnamedStrategy"
+    version: str = ""
+    description: str = ""
     params: dict[str, Any] = {}
     slippage_model: str = "half_spread"
     fixed_slippage_bps: float = 1.0

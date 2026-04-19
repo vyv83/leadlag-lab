@@ -43,3 +43,10 @@ data/**/*.jsonl
 
 # Jupyter runtime noise
 .ipynb_checkpoints/
+
+# Screenshots and images
+*.png
+*.jpg
+*.jpeg
+*.gif
+manual_test_screenshots_*/

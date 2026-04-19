@@ -325,6 +325,28 @@ class Session:
     def get_bbo_window(self, bin_idx: int) -> dict | None:
         return next((w for w in self.bbo_windows if int(w.get("bin_idx", -1)) == int(bin_idx)), None)
 
+    def get_ema_window(self, bin_idx: int) -> dict | None:
+        price_window = self.get_price_window(bin_idx)
+        ema_df = self.ema_df
+        if not price_window or ema_df is None or ema_df.empty:
+            return None
+        rel = price_window.get("rel_times_ms") or []
+        bin_size_ms = int(self.meta.get("bin_size_ms", 50) or 50)
+        venues = {}
+        for venue in (price_window.get("venues") or {}):
+            if venue not in ema_df.columns:
+                continue
+            values = []
+            for rel_ms in rel:
+                idx = int(bin_idx) + int(round(float(rel_ms) / bin_size_ms))
+                if idx < 0 or idx >= len(ema_df):
+                    values.append(None)
+                    continue
+                val = ema_df[venue].iloc[idx]
+                values.append(None if pd.isna(val) else float(val))
+            venues[venue] = values
+        return {"bin_idx": int(bin_idx), "rel_times_ms": rel, "venues": venues}
+
     def event_detail(self, bin_idx: int) -> dict:
         event = next((r for r in self.events.rows if int(r.get("bin_idx", -1)) == int(bin_idx)), None)
         if event is None:
@@ -335,6 +357,7 @@ class Session:
         return {
             "event": event,
             "price_window": self.get_price_window(bin_idx),
+            "ema_window": self.get_ema_window(bin_idx),
             "bbo_window": bbo_window,
             "bbo_available": bbo_available,
             "no_bbo_venues": no_bbo_venues,

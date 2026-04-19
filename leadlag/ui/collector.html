@@ -141,10 +141,24 @@ function renderStatus(st) {
 }
 function renderLive(st) {
   fillTable("#live", st.venues || [], r => [
-    r.name, r.role, statusPayload.stale ? `stale (${r.status})` : r.status, r.ticks, fmt(r.ticks_per_s_1m), fmt(r.ticks_per_s_10m),
+    r.name, r.role, statusCell(statusPayload.stale ? "stale" : r.status), r.ticks, sparkValue(r.ticks_per_s_1m), fmt(r.ticks_per_s_10m),
     r.bbo, fmt(r.bbo_per_s), r.reconnects, r.last_reconnect_utc || "—", utc(r.last_tick_ts),
     fmt(r.seconds_since_last_tick), fmt(r.last_price, 2), fmt(r.median_price, 2), r.last_error || "", fmt(r.uptime_pct),
   ]);
+}
+function statusCell(status) {
+  const s = String(status || "unknown");
+  const cls = s === "ok" || s === "running" ? "ok" : s === "reconnecting" || s === "stale" ? "ping-warn" : "no";
+  const td = el("td", { className: cls });
+  td.textContent = s;
+  return td;
+}
+function sparkValue(value) {
+  const v = Number(value || 0);
+  const wrap = el("div", { className: "spark-cell" });
+  wrap.appendChild(el("span", {}, [fmt(v)]));
+  wrap.appendChild(el("span", { className: "spark-bar", style: `width:${Math.max(2, Math.min(100, v * 4))}%` }, []));
+  return wrap;
 }
 function renderLog(rows) {
   const box = document.getElementById("logBox");
