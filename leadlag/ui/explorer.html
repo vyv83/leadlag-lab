@@ -31,12 +31,6 @@
       <button data-group="signal" data-value="B">B</button>
       <button data-group="signal" data-value="C">C</button>
     </span>
-    <label>Leader <select id="leaderMode">
-      <option value="">All</option>
-      <option value="okx">OKX only</option>
-      <option value="bybit">Bybit only</option>
-      <option value="confirmed">Confirmed only</option>
-    </select></label>
     <label>Direction <select id="direction">
       <option value="">All</option>
       <option value="1">UP</option>
@@ -163,7 +157,6 @@ function fillFollowerOptions() {
 
 function applyFilters() {
   const dir = document.getElementById("direction").value;
-  const leaderMode = document.getElementById("leaderMode").value;
   const follower = document.getElementById("filterFollower").value;
   const minMag = Number(document.getElementById("minMag").value || 0);
   const minLag = Number(document.getElementById("minLagging").value || 0);
@@ -175,10 +168,6 @@ function applyFilters() {
     if (minMag && Number(e.magnitude_sigma || 0) < minMag) return false;
     if (minLag && Number(e.n_lagging || (e.lagging_followers || []).length) < minLag) return false;
     if (follower && !(e.lagging_followers || []).includes(follower)) return false;
-    if (leaderMode === "confirmed" && e.signal !== "C") return false;
-    const actualLeader = e.anchor_leader || e.leader;
-    if (leaderMode === "okx" && actualLeader !== "OKX Perp") return false;
-    if (leaderMode === "bybit" && actualLeader !== "Bybit Perp") return false;
     const hhmm = utc(e.ts_ms).slice(0, 5);
     if (from && hhmm < from) return false;
     if (to && hhmm > to) return false;
@@ -448,7 +437,7 @@ document.querySelectorAll("[data-group='signal']").forEach(btn => {
     if (filteredEvents.length) selectEvent(filteredEvents[0].bin_idx);
   };
 });
-["leaderMode", "direction", "filterFollower", "minMag", "minLagging", "timeFrom", "timeTo", "sortBy"].forEach(id => {
+["direction", "filterFollower", "minMag", "minLagging", "timeFrom", "timeTo", "sortBy"].forEach(id => {
   document.getElementById(id).onchange = () => {
     applyFilters();
     if (selectedEvent) renderChart();
@@ -483,7 +472,7 @@ document.getElementById("nextEvent").onclick = () => moveEvent(1);
 document.getElementById("reset").onclick = () => {
   currentSignal = "";
   setActiveButton("signal", "");
-  ["leaderMode", "direction", "filterFollower", "minMag", "minLagging", "timeFrom", "timeTo"].forEach(id => document.getElementById(id).value = "");
+  ["direction", "filterFollower", "minMag", "minLagging", "timeFrom", "timeTo"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("sortBy").value = "time";
   applyFilters();
 };
@@ -494,9 +483,26 @@ document.addEventListener("keydown", ev => {
   if (["ArrowUp", "ArrowLeft"].includes(ev.key)) moveEvent(-1);
 });
 
+function initSignalLabels() {
+  fetchJSON("/api/venues")
+    .then(venues => {
+      const leaders = venues.filter(v => v.role === "leader").map(v => v.name);
+      const btns = document.querySelectorAll("[data-group='signal']");
+      if (leaders.length >= 2) {
+        const l0 = leaders[0].replace(" Perp", "");
+        const l1 = leaders[1].replace(" Perp", "");
+        btns[1].textContent = `A · ${l0}`;
+        btns[2].textContent = `B · ${l1}`;
+        btns[3].textContent = `C · ${l0}+${l1}`;
+      }
+    })
+    .catch(() => {});
+}
+
 (async () => {
   try {
     setActiveButton("signal", "");
+    initSignalLabels();
     await loadSessions();
   } catch (err) {
     showError("#status", err);

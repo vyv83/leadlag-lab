@@ -62,10 +62,12 @@
       <a class="button-link" href="collector.html">Open Collector</a>
       <a id="openLatest" class="button-link" href="explorer.html">Open Latest Session</a>
     </div>
+    <div class="table-scroll">
     <table id="collectorVenues"><thead><tr>
       <th>venue</th><th>role</th><th>status</th><th>ticks</th><th>ticks/s</th><th>BBO</th><th>BBO/s</th>
       <th>reconnects</th><th>last tick UTC</th><th>seconds idle</th><th>last price</th><th>last error</th>
     </tr></thead><tbody></tbody></table>
+    </div>
     <dialog id="collectorDialog">
       <h2>Start Collection</h2>
       <div class="toolbar">
@@ -106,15 +108,15 @@
   <section class="breakdown-grid">
     <div>
       <h2>Latest Collections</h2>
-      <table id="collections"><thead><tr><th>id</th><th>range UTC</th><th>ticks</th><th>BBO</th><th>venues</th><th>analysis</th></tr></thead><tbody></tbody></table>
+      <div class="table-scroll"><table id="collections"><thead><tr><th>id</th><th>range UTC</th><th>ticks</th><th>BBO</th><th>venues</th><th>analysis</th></tr></thead><tbody></tbody></table></div>
     </div>
     <div>
       <h2>Latest Sessions</h2>
-      <table id="sessions"><thead><tr><th>id</th><th>date</th><th>events</th><th>A/B/C</th><th>venues</th></tr></thead><tbody></tbody></table>
+      <div class="table-scroll"><table id="sessions"><thead><tr><th>id</th><th>date</th><th>events</th><th>A/B/C</th><th>venues</th></tr></thead><tbody></tbody></table></div>
     </div>
     <div>
       <h2>Latest Backtests</h2>
-      <table id="backtests"><thead><tr><th>id</th><th>strategy</th><th>trades</th><th>net</th><th>win</th><th>MC</th></tr></thead><tbody></tbody></table>
+      <div class="table-scroll"><table id="backtests"><thead><tr><th>id</th><th>strategy</th><th>trades</th><th>net</th><th>win</th><th>MC</th></tr></thead><tbody></tbody></table></div>
     </div>
   </section>
 </div>
