@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -39,6 +40,8 @@ COLLECTOR_PROC: "subprocess.Popen | None" = None
 PAPER_PROC: "subprocess.Popen | None" = None
 UI_DIR = Path(__file__).parent.parent / "ui"
 ANALYSIS_JOBS_DIRNAME = ".analysis_jobs"
+BACKTEST_JOBS_DIRNAME = ".backtest_jobs"
+BACKTEST_STATUS_FILENAME = ".backtest_status.json"
 
 app = FastAPI(title="leadlag-platform", version="0.1.0")
 
@@ -82,6 +85,134 @@ def _write_analysis_job(path: Path, payload: dict) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, indent=2))
     tmp.replace(path)
+
+
+def _backtest_job_path(data_dir: Path | str, job_id: str) -> Path:
+    root = Path(data_dir) / BACKTEST_JOBS_DIRNAME
+    root.mkdir(parents=True, exist_ok=True)
+    return root / f"{job_id}.json"
+
+
+def _write_backtest_job(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(path)
+
+
+def _backtest_status_path(data_dir: Path | str = DATA_DIR) -> Path:
+    return Path(data_dir) / BACKTEST_STATUS_FILENAME
+
+
+def _write_backtest_status(payload: dict, data_dir: Path | str = DATA_DIR) -> Path:
+    path = _backtest_status_path(data_dir)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(path)
+    return path
+
+
+def _read_backtest_status(data_dir: Path | str = DATA_DIR) -> dict | None:
+    path = _backtest_status_path(data_dir)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def _pid_alive(pid: Any) -> bool:
+    try:
+        os.kill(int(pid), 0)
+    except Exception:
+        return False
+    return True
+
+
+def _acquire_backtest_slot(strategy_name: str, session_id: str, data_dir: Path | str = DATA_DIR) -> dict:
+    """Allow only one backtest worker at a time on this server."""
+    now_ms = int(time.time() * 1000)
+    payload = {
+        "running": True,
+        "status": "starting",
+        "strategy_name": strategy_name,
+        "session_id": session_id,
+        "request_pid": os.getpid(),
+        "worker_pid": None,
+        "started_at_ms": now_ms,
+        "updated_at_ms": now_ms,
+    }
+    path = _backtest_status_path(data_dir)
+    for _ in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w") as fh:
+                json.dump(payload, fh, indent=2)
+            return payload
+        except FileExistsError:
+            existing = _read_backtest_status(data_dir) or {}
+            worker_pid = existing.get("worker_pid")
+            updated_at_ms = int(existing.get("updated_at_ms") or existing.get("started_at_ms") or 0)
+            age_ms = now_ms - updated_at_ms
+            if worker_pid and _pid_alive(worker_pid):
+                raise HTTPException(409, {
+                    "error": "backtest_already_running",
+                    "message": "Another backtest is already running on the server.",
+                    "running": existing,
+                })
+            if age_ms < 5 * 60 * 1000:
+                raise HTTPException(409, {
+                    "error": "backtest_start_in_progress",
+                    "message": "A backtest start is already in progress.",
+                    "running": existing,
+                })
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+    raise HTTPException(409, {
+        "error": "backtest_slot_busy",
+        "message": "Could not acquire backtest execution slot.",
+    })
+
+
+def _update_backtest_slot(data_dir: Path | str = DATA_DIR, **updates: Any) -> dict | None:
+    current = _read_backtest_status(data_dir)
+    if current is None:
+        return None
+    current.update(updates)
+    current["updated_at_ms"] = int(time.time() * 1000)
+    _write_backtest_status(current, data_dir=data_dir)
+    return current
+
+
+def _release_backtest_slot(data_dir: Path | str = DATA_DIR) -> None:
+    path = _backtest_status_path(data_dir)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+@app.get("/api/backtests/status")
+def backtest_status():
+    current = _read_backtest_status(DATA_DIR)
+    if not current:
+        return {"running": False}
+    worker_pid = current.get("worker_pid")
+    if worker_pid and not _pid_alive(worker_pid):
+        _release_backtest_slot(DATA_DIR)
+        return {"running": False, "stale": True}
+    return current
+
+
+@app.get("/api/backtest-jobs/{job_id}")
+def backtest_job_status(job_id: str):
+    path = _backtest_job_path(DATA_DIR, job_id)
+    if not path.exists():
+        raise HTTPException(404, {"error": "backtest_job_not_found", "job_id": job_id})
+    return json.loads(path.read_text())
 
 
 def _normalize_analysis_params(body: dict | None) -> dict:
@@ -302,6 +433,7 @@ def list_strategies():
                 "class_name": s.__class__.__name__,
                 "description": getattr(s, "description", ""),
                 "params": params,
+                "param_keys": _extract_strategy_param_keys(p.read_text(), params),
                 "version": getattr(s, "version", ""),
                 "venues": _extract_venues(params),
                 "signal_type": _extract_signal_type(params),
@@ -345,6 +477,17 @@ def delete_strategy(name: str, include_notebook: bool = Query(default=False)):
     p = DATA_DIR / "strategies" / f"{name}.py"
     if not p.exists():
         raise HTTPException(404, "strategy not found")
+    # guard: block if paper trading is using this strategy
+    paper_status_path = DATA_DIR / ".paper_status.json"
+    if paper_status_path.exists():
+        try:
+            ps = json.loads(paper_status_path.read_text())
+            if ps.get("running") and ps.get("strategy_name") == name:
+                raise HTTPException(409, {"error": "strategy_in_use_by_paper", "message": "Stop paper trading before deleting this strategy"})
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     # cascade: delete related backtests + MC
     bt_root = DATA_DIR / "backtest"
     removed_backtests = 0
@@ -423,17 +566,37 @@ def list_backtests():
             continue
         meta = json.loads(meta_p.read_text())
         stats = json.loads(stats_p.read_text()) if stats_p.exists() else {}
+        total_net_pnl_bps = stats.get("total_net_pnl_bps", 0.0)
+        max_drawdown_bps = stats.get("max_drawdown_bps", 0.0)
+        recovery_factor = stats.get("recovery_factor")
+        if recovery_factor is None and isinstance(max_drawdown_bps, (int, float)) and max_drawdown_bps < 0:
+            recovery_factor = float(total_net_pnl_bps / abs(max_drawdown_bps))
         out.append({
             "id": d.name,
             "strategy": meta.get("strategy_name"),
             "session_id": meta.get("session_id"),
             "created_at": meta.get("created_at"),
+            "backtest_date_utc": meta.get("backtest_date_utc"),
+            "strategy_version": meta.get("strategy_version"),
+            "strategy_description": meta.get("strategy_description"),
+            "params": meta.get("params", {}),
+            "strategy_params": meta.get("strategy_params", {}),
+            "params_override": meta.get("params_override", {}),
+            "entry_type": meta.get("entry_type"),
+            "slippage_model": meta.get("slippage_model"),
+            "position_mode": meta.get("position_mode"),
+            "fixed_slippage_bps": meta.get("fixed_slippage_bps"),
+            "engine_version": meta.get("engine_version"),
+            "computation_time_s": meta.get("computation_time_s"),
             "n_trades": stats.get("n_trades", 0),
-            "total_net_pnl_bps": stats.get("total_net_pnl_bps", 0.0),
+            "total_net_pnl_bps": total_net_pnl_bps,
+            "total_gross_pnl_bps": stats.get("total_gross_pnl_bps", 0.0),
             "avg_trade_bps": stats.get("avg_trade_bps", 0.0),
+            "profit_factor": stats.get("profit_factor"),
+            "recovery_factor": recovery_factor,
             "win_rate": stats.get("win_rate", 0.0),
             "sharpe": stats.get("sharpe", 0.0),
-            "max_drawdown_bps": stats.get("max_drawdown_bps", 0.0),
+            "max_drawdown_bps": max_drawdown_bps,
             "has_montecarlo": (d / "montecarlo.json").exists(),
         })
     return out
@@ -449,6 +612,137 @@ def backtest_artifact(bt_id: str, artifact: str):
             return {}
         raise HTTPException(404, f"{artifact}.json missing")
     return json.loads(p.read_text())
+
+
+def _backtest_worker(
+    strategy_path: str,
+    strategy_name: str,
+    session_id: str,
+    params_override: dict | None,
+    data_dir: str,
+    progress_callback=None,
+) -> dict:
+    if progress_callback:
+        progress_callback("loading_strategy", "Loading strategy…", 0.10)
+    try:
+        strategy = load_strategy(strategy_path)
+        if getattr(strategy, "name", "") in ("", "UnnamedStrategy"):
+            strategy.name = strategy_name
+    except Exception as e:
+        return {
+            "ok": False,
+            "status": 400,
+            "error": {"error": "strategy_load_failed", "type": type(e).__name__, "message": str(e)},
+        }
+    if progress_callback:
+        progress_callback("loading_session", "Loading analysis artifacts…", 0.22)
+    try:
+        session = load_session(session_id, data_dir=data_dir)
+    except Exception as e:
+        return {
+            "ok": False,
+            "status": 400,
+            "error": {"error": "session_load_failed", "type": type(e).__name__, "message": str(e)},
+        }
+    if progress_callback:
+        progress_callback("running_backtest", "Running backtest engine…", 0.55)
+    try:
+        result = run_backtest(strategy, session, params_override=params_override, data_dir=data_dir)
+        if progress_callback:
+            progress_callback("saving", "Saving backtest artifacts…", 0.88)
+        out = result.save(data_dir=data_dir)
+    except ContractError as e:
+        return {
+            "ok": False,
+            "status": 500,
+            "error": {"error": "contract_validation_failed", "message": str(e)},
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "status": 400,
+            "error": {"error": "backtest_failed", "type": type(e).__name__, "message": str(e)},
+        }
+    return {
+        "ok": True,
+        "data": {"backtest_id": out.name, "n_trades": len(result.trades), "stats": result.stats},
+    }
+
+
+def _run_backtest_job(job_path: str, job_id: str, strategy_path: str, strategy_name: str, session_id: str, params_override: dict | None, data_dir: str) -> None:
+    path = Path(job_path)
+    try:
+        payload = json.loads(path.read_text()) if path.exists() else {}
+    except Exception:
+        payload = {}
+
+    def update(status: str, message: str, extra: dict | None = None) -> None:
+        current = {
+            **payload,
+            "job_id": job_id,
+            "strategy_name": strategy_name,
+            "session_id": session_id,
+            "status": status,
+            "message": message,
+            "stage": current_stage.get("stage", payload.get("stage", "queued")),
+            "progress": current_stage.get("progress", payload.get("progress", 0.0)),
+            "updated_at_ms": int(time.time() * 1000),
+        }
+        if extra:
+            current.update(extra)
+        _write_backtest_job(path, current)
+
+    current_stage = {
+        "stage": payload.get("stage", "queued"),
+        "progress": float(payload.get("progress", 0.0) or 0.0),
+    }
+
+    def update_stage(stage: str, message: str, progress: float) -> None:
+        current_stage["stage"] = stage
+        current_stage["progress"] = max(0.0, min(1.0, float(progress)))
+        update("running", message)
+
+    try:
+        current_stage["stage"] = "starting"
+        current_stage["progress"] = 0.04
+        update("running", "Backtest worker started", {"worker_pid": os.getpid()})
+        _update_backtest_slot(
+            data_dir,
+            status="running",
+            worker_pid=os.getpid(),
+            strategy_name=strategy_name,
+            session_id=session_id,
+            job_id=job_id,
+        )
+        result = _backtest_worker(
+            strategy_path,
+            strategy_name,
+            session_id,
+            params_override,
+            data_dir,
+            progress_callback=update_stage,
+        )
+        if result.get("ok"):
+            data = result["data"]
+            current_stage["stage"] = "completed"
+            current_stage["progress"] = 1.0
+            update("completed", f"Backtest ready: {data['backtest_id']}", data)
+        else:
+            current_stage["stage"] = "failed"
+            current_stage["progress"] = 1.0
+            update("failed", result.get("error", {}).get("message", "Backtest failed"), {
+                "error": result.get("error"),
+                "http_status": result.get("status", 500),
+            })
+    except Exception as e:
+        current_stage["stage"] = "failed"
+        current_stage["progress"] = 1.0
+        update("failed", str(e), {
+            "error": {"type": type(e).__name__, "message": str(e)},
+            "http_status": 500,
+        })
+    finally:
+        _release_backtest_slot(data_dir)
 
 
 @app.get("/api/backtests/{bt_id}/trade/{trade_id}")
@@ -479,6 +773,8 @@ def backtest_trade_detail(bt_id: str, trade_id: int):
 
 @app.post("/api/backtests/run")
 def backtest_run(body: dict = Body(...)):
+    import multiprocessing
+
     name = body.get("strategy_name")
     session_id = body.get("session_id")
     params_override = body.get("params_override")
@@ -487,24 +783,50 @@ def backtest_run(body: dict = Body(...)):
     strategy_path = DATA_DIR / "strategies" / f"{name}.py"
     if not strategy_path.exists():
         raise HTTPException(400, {"error": "strategy_not_found", "path": str(strategy_path)})
+    _acquire_backtest_slot(name, session_id, DATA_DIR)
+    job_id = str(uuid.uuid4())
+    job_path = _backtest_job_path(DATA_DIR, job_id)
+    _write_backtest_job(job_path, {
+        "job_id": job_id,
+        "strategy_name": name,
+        "session_id": session_id,
+        "status": "queued",
+        "stage": "queued",
+        "progress": 0.02,
+        "message": "Backtest queued",
+        "params_override": params_override or {},
+        "created_at_ms": int(time.time() * 1000),
+        "updated_at_ms": int(time.time() * 1000),
+    })
+    ctx = multiprocessing.get_context("spawn")
     try:
-        strategy = load_strategy(str(strategy_path))
-        if getattr(strategy, "name", "") in ("", "UnnamedStrategy"):
-            strategy.name = name
-    except Exception as e:
-        raise HTTPException(400, {"error": "strategy_load_failed", "type": type(e).__name__, "message": str(e)})
-    try:
-        session = load_session(session_id, data_dir=DATA_DIR)
-    except Exception as e:
-        raise HTTPException(400, {"error": "session_load_failed", "type": type(e).__name__, "message": str(e)})
-    try:
-        result = run_backtest(strategy, session, params_override=params_override, data_dir=DATA_DIR)
-        out = result.save(data_dir=DATA_DIR)
-    except ContractError as e:
-        raise HTTPException(500, {"error": "contract_validation_failed", "message": str(e)})
-    except Exception as e:
-        raise HTTPException(400, {"error": "backtest_failed", "type": type(e).__name__, "message": str(e)})
-    return {"backtest_id": out.name, "n_trades": len(result.trades), "stats": result.stats}
+        proc = ctx.Process(
+            target=_run_backtest_job,
+            args=(str(job_path), job_id, str(strategy_path), name, session_id, params_override, str(DATA_DIR)),
+            daemon=True,
+        )
+        proc.start()
+        _update_backtest_slot(
+            DATA_DIR,
+            status="queued",
+            worker_pid=proc.pid,
+            strategy_name=name,
+            session_id=session_id,
+            job_id=job_id,
+        )
+        return {
+            "ok": True,
+            "queued": True,
+            "job_id": job_id,
+            "status_url": f"/api/backtest-jobs/{job_id}",
+        }
+    except Exception:
+        _release_backtest_slot(DATA_DIR)
+        try:
+            job_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 @app.delete("/api/backtests/{bt_id}")
@@ -540,9 +862,15 @@ def delete_montecarlo(bt_id: str):
 @app.delete("/api/collections/{collection_id}")
 def delete_collection(collection_id: str):
     """Delete a collection (raw parquet files) and all related analyses."""
+    collection = get_collection(DATA_DIR, collection_id)
+    if collection is None:
+        raise HTTPException(404, {"error": "collection_not_found", "collection_id": collection_id})
     removed_analyses = 0
+    removed_backtests = 0
     # find and delete related sessions/analyses
     sessions_dir = DATA_DIR / "sessions"
+    exact_prefix = "_".join(collection_id.split("_")[:2])
+    related_session_ids: set[str] = set()
     if sessions_dir.is_dir():
         for d in list(sessions_dir.iterdir()):
             if not d.is_dir():
@@ -553,28 +881,60 @@ def delete_collection(collection_id: str):
             if meta_p.exists():
                 try:
                     meta = json.loads(meta_p.read_text())
-                    if meta.get("collection_id") == collection_id or d.name.startswith(collection_id.split("_")[0]):
+                    if meta.get("collection_id") == collection_id or d.name.startswith(exact_prefix):
+                        related_session_ids.add(d.name)
                         shutil.rmtree(d, ignore_errors=True)
                         removed_analyses += 1
                         continue
                 except Exception:
                     pass
             # fallback: check if session starts with collection timestamp prefix
-            prefix = "_".join(collection_id.split("_")[:3])
-            if d.name.startswith(prefix):
+            if d.name.startswith(exact_prefix):
+                related_session_ids.add(d.name)
                 shutil.rmtree(d, ignore_errors=True)
                 removed_analyses += 1
+    # delete related backtests for removed analyses
+    bt_root = DATA_DIR / "backtest"
+    if bt_root.is_dir() and related_session_ids:
+        for d in list(bt_root.iterdir()):
+            if not d.is_dir():
+                continue
+            meta_p = d / "meta.json"
+            if not meta_p.exists():
+                continue
+            try:
+                meta = json.loads(meta_p.read_text())
+            except Exception:
+                continue
+            if meta.get("session_id") in related_session_ids:
+                shutil.rmtree(d, ignore_errors=True)
+                removed_backtests += 1
     # delete raw tick/bbo files for this collection
     ticks_dir = DATA_DIR / "ticks"
     bbo_dir = DATA_DIR / "bbo"
     removed_files = 0
-    for d in [ticks_dir, bbo_dir]:
-        if not d.is_dir():
-            continue
-        for f in list(d.glob(f"{collection_id}*")):
-            f.unlink()
+    for raw_path in list(collection.get("tick_file_paths") or []) + list(collection.get("bbo_file_paths") or []):
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = Path(raw_path)
+        if path.exists():
+            path.unlink()
             removed_files += 1
-    return {"ok": True, "removed_analyses": removed_analyses, "removed_files": removed_files}
+            parent = path.parent
+            while parent not in {ticks_dir.parent, ticks_dir, bbo_dir, DATA_DIR}:
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
+    return {
+        "ok": True,
+        "removed_analyses": removed_analyses,
+        "removed_backtests": removed_backtests,
+        "removed_files": removed_files,
+    }
+
+@app.post("/api/backtests/{bt_id}/montecarlo/run")
 def backtest_montecarlo_run(bt_id: str, body: dict = Body(default_factory=dict)):
     bt_root = DATA_DIR / "backtest" / bt_id
     if not bt_root.is_dir():
@@ -957,6 +1317,18 @@ def _extract_signal_type(params: dict) -> list[str]:
             if isinstance(val, str):
                 return [val]
     return []
+
+
+def _extract_strategy_param_keys(source: str, params: dict | None = None) -> list[str]:
+    keys = set((params or {}).keys())
+    patterns = [
+        r'(?:self\.params|params|p)\s*\[\s*["\']([A-Za-z0-9_]+)["\']\s*\]',
+        r'(?:self\.params|params|p)\.get\(\s*["\']([A-Za-z0-9_]+)["\']',
+    ]
+    for pattern in patterns:
+        for match in re.findall(pattern, source or ""):
+            keys.add(str(match))
+    return sorted(keys)
 
 
 def _last_backtest_summary(strategy_name: str) -> Optional[dict]:

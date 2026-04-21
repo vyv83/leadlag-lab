@@ -6,20 +6,6 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><h1>leadlag</h1>
-<nav>
-  <a href="dashboard.html">Dashboard</a>
-  <a href="collector.html">Collector</a>
-  <a href="recordings.html" class="active">Recordings</a>
-  <a href="explorer.html">Explorer</a>
-  <a href="quality.html">Quality</a>
-  <a href="strategy.html">Strategies</a>
-  <a href="backtest.html">Backtests</a>
-  <a href="montecarlo.html">Monte Carlo</a>
-  <a href="paper.html">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
-</nav>
-</header>
 <main>
 
 <section>
@@ -33,6 +19,7 @@
 
 </main>
 <script src="app.js"></script>
+<script src="sidebar.js"></script>
 <script>
 let recordings = [];
 let sessions = [];
@@ -55,6 +42,21 @@ function analysesForRecording(recId) {
     const prefix = recId.split("_").slice(0, 3).join("_");
     return s.id.startsWith(prefix) || (s.collection_id && s.collection_id === recId);
   });
+}
+
+function renderPageTitle(recId) {
+  if (!window.insertPageTitle) return;
+  const rec = recordings.find(r => r.id === recId);
+  if (!rec) return;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const d = rec.t_start_ms ? new Date(Number(rec.t_start_ms)) : null;
+  const dateStr = d ? `${months[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}` : "?";
+  const dur = (rec.t_start_ms && rec.t_end_ms)
+    ? `${((Number(rec.t_end_ms) - Number(rec.t_start_ms)) / 3600000).toFixed(1)}h`
+    : "";
+  const venues = rec.n_venues ? `${rec.n_venues} venues` : "";
+  const metaParts = [dateStr, dur, venues].filter(Boolean);
+  window.insertPageTitle("Recording", metaParts.join(" · "), "");
 }
 
 function renderRecordings() {
@@ -101,9 +103,31 @@ function renderRecordings() {
 
     // actions
     const actions = el("div", { class: "toolbar", style: "margin-top:6px" });
-    const newBtn = el("button", { onclick: () => toggleNewAnalysis(idx) }, ["+ New Analysis"]);
+    const newBtn = el("button", { className: "button-secondary", onclick: () => toggleNewAnalysis(idx) }, ["+ New Analysis"]);
     actions.appendChild(newBtn);
+    const deleteBtn = el("button", {
+      className: "button-danger",
+      onclick: () => toggleDeleteRecording(rec.id),
+    }, ["Delete Recording"]);
+    actions.appendChild(deleteBtn);
     div.appendChild(actions);
+
+    const deleteBox = el("div", {
+      id: `deleteRecording-${rec.id}`,
+      className: "banner",
+      style: "display:none; margin-top:8px",
+    });
+    deleteBox.innerHTML = `
+      <div>Delete recording "${rec.id}"?</div>
+      <div class="muted">This also removes ${analyses.length} analyses linked to this recording.</div>
+      <div class="action-group" style="margin-top:8px">
+        <button class="button-danger" data-rec-confirm="${rec.id}">Confirm Delete</button>
+        <button class="button-secondary" data-rec-cancel="${rec.id}">Cancel</button>
+      </div>
+    `;
+    deleteBox.querySelector(`[data-rec-confirm="${rec.id}"]`).onclick = () => confirmDeleteRecording(rec.id);
+    deleteBox.querySelector(`[data-rec-cancel="${rec.id}"]`).onclick = () => toggleDeleteRecording(rec.id);
+    div.appendChild(deleteBox);
 
     // new analysis inline form (hidden)
     const form = el("div", { class: "new-analysis-form", id: `newAnalysis-${idx}`, style: "display:none; margin-top:6px" });
@@ -195,6 +219,32 @@ function toggleNewAnalysis(idx) {
   form.style.display = form.style.display === "none" ? "" : "none";
 }
 
+function toggleDeleteRecording(recId) {
+  const box = document.getElementById(`deleteRecording-${recId}`);
+  if (!box) return;
+  box.style.display = box.style.display === "none" ? "" : "none";
+}
+
+async function confirmDeleteRecording(recId) {
+  const statusNode = document.getElementById("status");
+  statusNode.textContent = `Deleting ${recId}…`;
+  try {
+    const res = await apiFetch(`/api/collections/${recId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `DELETE failed with ${res.status}`);
+    }
+    await loadAll();
+    if (typeof refreshSidebar === "function") refreshSidebar(true);
+    statusNode.textContent = `Deleted ${recId}.`;
+    if (qs("id") === recId) {
+      window.location.href = "recordings.html";
+    }
+  } catch (err) {
+    statusNode.innerHTML = `<div class="error">Delete failed: ${err.message || err}</div>`;
+  }
+}
+
 async function pollAnalysisJob({ jobId, sessionId, resultNode, progressFill, progressText, onComplete }) {
   if (analysisPollers.has(jobId)) return analysisPollers.get(jobId);
   const task = new Promise((resolve, reject) => {
@@ -236,7 +286,16 @@ async function pollAnalysisJob({ jobId, sessionId, resultNode, progressFill, pro
 }
 
 (async () => {
-  try { await loadAll(); } catch (err) { showError("#status", err); }
+  try {
+    await loadAll();
+    const urlId = qs("id");
+    if (urlId) {
+      renderPageTitle(urlId);
+      if (qs("confirm_delete") === "1") {
+        toggleDeleteRecording(urlId);
+      }
+    }
+  } catch (err) { showError("#status", err); }
 })();
 </script>
 </body>

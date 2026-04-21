@@ -8,20 +8,6 @@
 <!-- Plotly mode bar is enabled globally in app.js: displayModeBar: true -->
 </head>
 <body>
-<header><h1>leadlag</h1>
-<nav>
-  <a href="dashboard.html">Dashboard</a>
-  <a href="collector.html">Collector</a>
-  <a href="recordings.html">Recordings</a>
-  <a href="explorer.html">Explorer</a>
-  <a href="quality.html">Quality</a>
-  <a href="strategy.html">Strategies</a>
-  <a href="backtest.html" class="active">Backtests</a>
-  <a href="montecarlo.html">Monte Carlo</a>
-  <a href="paper.html">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
-</nav>
-</header>
 <main>
 <section id="list" hidden>
   <h2>All backtests</h2>
@@ -36,9 +22,17 @@
   <div class="toolbar">
     <a id="mcLink" class="button-link" href="#">Run Monte Carlo</a>
     <a id="sessionLink" class="button-link" href="#">Open Analysis in Explorer</a>
-    <button id="exportJson">Export JSON</button>
-    <button id="deleteBtn" style="color:#f85149" hidden>Delete</button>
+    <a id="jupyterBtLink" class="button-link" href="/leadlag-lab/lab/" target="_blank">Open Notebook ↗</a>
+    <button id="exportJson" class="button-secondary">Export JSON</button>
+    <button id="deleteBtn" class="button-danger" hidden>Delete</button>
     <span id="status" class="muted">Loading...</span>
+  </div>
+  <div id="backtestDeleteConfirm" class="banner" hidden>
+    <div id="backtestDeleteText">Delete backtest?</div>
+    <div class="action-group" style="margin-top:8px">
+      <button id="backtestDeleteConfirmBtn" class="button-danger">Confirm Delete</button>
+      <button id="backtestDeleteCancelBtn" class="button-secondary">Cancel</button>
+    </div>
   </div>
   <h2 id="title"></h2>
   <div class="kv" id="meta"></div>
@@ -64,6 +58,11 @@
   <span id="btDecisionMsg">—</span>
   <a id="btDecisionMc" class="button-link" href="#">Run Monte Carlo →</a>
   <a href="/leadlag-lab/lab/" target="_blank" class="hint" style="margin-left:8px">← Improve in Notebook ↗</a>
+</div>
+
+<div id="zeroTradesBanner" class="banner" hidden>
+  0 trades — strategy never triggered on this data. Check signal filter or threshold.
+  <a class="button-link" href="/leadlag-lab/lab/" target="_blank" style="margin-left:6px">Open Notebook ↗</a>
 </div>
 
 <div id="lowSampleBanner" class="banner" hidden>
@@ -142,6 +141,7 @@
 </section>
 </main>
 <script src="app.js"></script>
+<script src="sidebar.js"></script>
 <script>
 let btId = qs("id");
 let meta = {};
@@ -160,6 +160,7 @@ async function init() {
   stats = await fetchJSON(`/api/backtests/${btId}/stats`);
   equity = await fetchJSON(`/api/backtests/${btId}/equity`);
   trades = await fetchJSON(`/api/backtests/${btId}/trades`);
+  renderPageTitle();
   renderHeader();
   renderCards();
   renderEquity();
@@ -189,14 +190,38 @@ async function showList() {
   ]);
 }
 
+function renderPageTitle() {
+  if (!window.insertPageTitle) return;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const d = meta.backtest_date_utc ? new Date(meta.backtest_date_utc) :
+            meta.created_at ? new Date(meta.created_at) : null;
+  const dateStr = d ? `${months[d.getUTCMonth()]} ${d.getUTCDate()}` : "?";
+  const stratName = meta.strategy_name || btId;
+  const nTrades = stats.n_trades || 0;
+  const pnl = Number(stats.total_net_pnl_bps || 0);
+  const pnlStr = (pnl >= 0 ? "+" : "") + pnl.toFixed(0) + " bps";
+  const metaStr = `${dateStr} · ${nTrades} trades · ${pnlStr}`;
+  const jupLink = meta.strategy_name ? notebookUrl(meta.strategy_name) : jupyterLabUrl();
+  const actions = `<a href="${jupLink}" target="_blank" class="button-link">Open Notebook ↗</a>`;
+  window.insertPageTitle(`${stratName} ×`, metaStr, actions);
+}
+
 function renderHeader() {
   document.getElementById("title").textContent = `${meta.strategy_name || btId} on ${meta.session_id || "analysis"}`;
   document.getElementById("mcLink").href = `montecarlo.html?backtest=${btId}`;
   document.getElementById("sessionLink").href = `explorer.html?session=${meta.session_id || ""}`;
+  document.getElementById("jupyterBtLink").href = meta.strategy_name ? notebookUrl(meta.strategy_name) : jupyterLabUrl();
   document.getElementById("deleteBtn").hidden = false;
-  document.getElementById("deleteBtn").onclick = async () => {
-    if (!confirm(`Delete backtest "${btId}"? Monte Carlo results also removed.`)) return;
+  document.getElementById("deleteBtn").onclick = () => {
+    document.getElementById("backtestDeleteText").textContent = `Delete backtest "${btId}"? Monte Carlo results also removed.`;
+    document.getElementById("backtestDeleteConfirm").hidden = false;
+  };
+  document.getElementById("backtestDeleteCancelBtn").onclick = () => {
+    document.getElementById("backtestDeleteConfirm").hidden = true;
+  };
+  document.getElementById("backtestDeleteConfirmBtn").onclick = async () => {
     await apiFetch(`/api/backtests/${btId}`, { method: "DELETE" });
+    if (typeof refreshSidebar === "function") await refreshSidebar(true);
     location.href = "backtest.html";
   };
   document.getElementById("exportJson").onclick = () => {
@@ -436,7 +461,8 @@ document.querySelectorAll(".layerToggle").forEach(input => input.onchange = rend
 
 function renderLowSampleBanner() {
   const n = stats.n_trades || 0;
-  document.getElementById("lowSampleBanner").hidden = n >= 20;
+  document.getElementById("zeroTradesBanner").hidden = n !== 0;
+  document.getElementById("lowSampleBanner").hidden = n === 0 || n >= 20;
 }
 
 function renderBtDecision() {

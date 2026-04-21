@@ -8,24 +8,9 @@
 <!-- Plotly mode bar is enabled globally in app.js: displayModeBar: true -->
 </head>
 <body>
-<header><h1>leadlag</h1>
-<nav>
-  <a href="dashboard.html">Dashboard</a>
-  <a href="collector.html">Collector</a>
-  <a href="recordings.html">Recordings</a>
-  <a href="explorer.html" class="active">Explorer</a>
-  <a href="quality.html">Quality</a>
-  <a href="strategy.html">Strategies</a>
-  <a href="backtest.html">Backtests</a>
-  <a href="montecarlo.html">Monte Carlo</a>
-  <a href="paper.html">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
-</nav>
-</header>
 <main>
 <section>
   <div class="toolbar">
-    <label>Analysis <select id="session"></select></label>
     <span class="segmented" id="signalButtons">
       <button data-group="signal" data-value="">All</button>
       <button data-group="signal" data-value="A">A</button>
@@ -98,10 +83,15 @@
     <button id="btRunBtn">Run Backtest</button>
     <span id="btRunResult" class="muted"></span>
   </div>
+  <div id="btRunProgress" class="na-progress" hidden>
+    <div class="na-progress-bar"><div id="btRunProgressFill" class="na-progress-fill"></div></div>
+    <div id="btRunProgressText" class="na-progress-text muted">Queued…</div>
+  </div>
 </section>
 
 </main>
 <script src="app.js"></script>
+<script src="sidebar.js"></script>
 <script>
 let sessions = [];
 let meta = {};
@@ -118,27 +108,23 @@ const btParam = qs("backtest");
 const tradeParam = qs("trade");
 
 function selectedSession() {
-  return document.getElementById("session").value;
+  return qs("session");
 }
 
-async function loadSessions() {
-  sessions = await fetchJSON("/api/sessions");
-  const sel = document.getElementById("session");
-  if (!sessions.length) {
-    document.getElementById("status").textContent = "No analyses yet.";
+async function initExplorer() {
+  const sid = qs("session");
+  if (!sid) {
+    document.getElementById("status").textContent = "Select an Analysis from the sidebar [E] to explore events.";
     return;
   }
-  sel.innerHTML = sessions.map(s => `<option value="${s.id}">${s.id} (${s.n_events || 0})</option>`).join("");
-  const pre = qs("session");
-  if (pre) sel.value = pre;
-  sel.onchange = () => loadSession(sel.value);
-  await loadSession(sel.value);
+  await loadSession(sid);
 }
 
 async function loadSession(sessionId) {
   document.getElementById("status").textContent = "Loading events...";
   meta = await fetchJSON(`/api/sessions/${sessionId}/meta`);
   allEvents = await fetchJSON(`/api/sessions/${sessionId}/events`);
+  renderPageTitle(sessionId);
   fillFollowerOptions();
   if (mode === "trade" && btParam && tradeParam !== null) {
     tradeDetail = await fetchJSON(`/api/backtests/${btParam}/trade/${tradeParam}`);
@@ -193,7 +179,25 @@ function applyFilters() {
 }
 
 function renderEventsTable() {
-  document.getElementById("summary").textContent = `Showing ${filteredEvents.length} of ${allEvents.length} events`;
+  const nFiltered = filteredEvents.length;
+  const nAll = allEvents.length;
+  document.getElementById("summary").textContent = `Showing ${nFiltered} of ${nAll} events`;
+  const statusEl = document.getElementById("status");
+  if (nAll === 0) {
+    const sid = selectedSession();
+    const recId = sid ? sid.split("_").slice(0, 3).join("_") : "";
+    statusEl.innerHTML = `⚠ No events detected with current threshold. ` +
+      `<a href="recordings.html?id=${encodeURIComponent(recId)}&action=analyze">Try lower threshold → Re-analyze</a> &nbsp; ` +
+      `<a href="collector.html">Collect more data →</a>`;
+    statusEl.hidden = false;
+    return;
+  }
+  if (nAll > 0 && nFiltered === 0) {
+    statusEl.textContent = "No events match current filters — try adjusting signal/direction/sigma.";
+    statusEl.hidden = false;
+  } else {
+    statusEl.textContent = "";
+  }
   const tbody = document.querySelector("#events tbody");
   tbody.innerHTML = "";
   filteredEvents.forEach((e, i) => {
@@ -514,18 +518,50 @@ function initSignalLabels() {
 // ── Run Backtest Section ──
 let explorerStrategies = [];
 let selectedBtStrategy = null;
+let explorerBacktestStatus = { running: false };
+let explorerBtPoll = null;
+let explorerBacktestJobId = null;
+
+function explorerBacktestPct(job) {
+  return Math.max(2, Math.min(100, Math.round((Number(job?.progress) || 0) * 100)));
+}
 
 async function loadExplorerStrategies() {
   try {
-    explorerStrategies = await fetchJSON("/api/strategies");
-  } catch { explorerStrategies = []; }
+    const [strats, status] = await Promise.all([
+      fetchJSON("/api/strategies"),
+      fetchJSON("/api/backtests/status").catch(() => ({ running: false })),
+    ]);
+    explorerStrategies = strats;
+    explorerBacktestStatus = status || { running: false };
+  } catch {
+    explorerStrategies = [];
+    explorerBacktestStatus = { running: false };
+  }
   const box = document.getElementById("strategyList");
   const valid = explorerStrategies.filter(s => s.valid);
-  if (!valid.length || !selectedSession()) {
+  if (!selectedSession()) {
     document.getElementById("runBacktestSection").hidden = true;
     return;
   }
   document.getElementById("runBacktestSection").hidden = false;
+  if (!valid.length) {
+    document.getElementById("strategyList").innerHTML =
+      `<span class="muted">No strategies yet — <a href="/leadlag-lab/lab/" target="_blank">Open Jupyter ↗</a> to create one.</span>`;
+    document.getElementById("btRunBtn").disabled = true;
+    return;
+  }
+  document.getElementById("btRunBtn").disabled = !!explorerBacktestStatus.running || !!explorerBacktestJobId;
+  if (explorerBacktestStatus.running) {
+    const parts = ["Backtest running"];
+    if (explorerBacktestStatus.strategy_name) parts.push(explorerBacktestStatus.strategy_name);
+    if (explorerBacktestStatus.session_id) parts.push(explorerBacktestStatus.session_id);
+    document.getElementById("btRunResult").textContent = parts.join(" · ");
+  } else if (explorerBacktestJobId) {
+    document.getElementById("btRunResult").textContent = `Queued: ${explorerBacktestJobId}`;
+  } else if (document.getElementById("btRunResult").textContent.startsWith("Backtest running")) {
+    document.getElementById("btRunResult").textContent = "";
+  }
   box.innerHTML = "";
   valid.forEach(s => {
     const latest = s.last_backtest_summary;
@@ -544,18 +580,61 @@ async function loadExplorerStrategies() {
   });
 }
 
+function renderPageTitle(sessionId) {
+  if (!window.insertPageTitle) return;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const d = meta.t_start_ms ? new Date(Number(meta.t_start_ms)) : null;
+  const dateStr = d ? `${months[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}` : "?";
+  const nEv = allEvents.length || meta.n_events || 0;
+  const metaParts = [dateStr, `${nEv} events`].filter(Boolean);
+  window.insertPageTitle("Analysis", metaParts.join(" · "), "");
+}
+
 document.getElementById("btRunBtn").onclick = async () => {
   if (!selectedBtStrategy) return alert("Select a strategy first");
+  const runBtn = document.getElementById("btRunBtn");
+  if (explorerBacktestStatus.running) {
+    return;
+  }
   const sessionId = selectedSession();
   const raw = document.getElementById("btOverride").value.trim();
   const body = { strategy_name: selectedBtStrategy, session_id: sessionId };
+  const progressBox = document.getElementById("btRunProgress");
+  const progressFill = document.getElementById("btRunProgressFill");
+  const progressText = document.getElementById("btRunProgressText");
   if (raw) { try { body.params_override = JSON.parse(raw); } catch { alert("bad JSON"); return; } }
-  document.getElementById("btRunResult").textContent = "Running...";
+  runBtn.disabled = true;
+  document.getElementById("btRunResult").textContent = "";
+  progressBox.hidden = false;
+  progressFill.style.width = "2%";
+  progressText.textContent = "Queueing backtest…";
   try {
     const res = await postJSON("/api/backtests/run", body);
-    document.getElementById("btRunResult").innerHTML = `Running... <a href="backtest.html?id=${res.backtest_id}">\u2192 View Backtest</a>`;
+    explorerBacktestJobId = res.job_id;
+    progressFill.style.width = "4%";
+    progressText.textContent = `Queued: ${res.job_id}`;
+    const done = await waitForBacktestJob(res.job_id, {
+      intervalMs: 1000,
+      onUpdate: (job) => {
+        const fill = document.getElementById("btRunProgressFill");
+        const text = document.getElementById("btRunProgressText");
+        if (!fill || !text) return;
+        fill.style.width = `${explorerBacktestPct(job)}%`;
+        text.textContent = job.message || job.stage || "Running backtest…";
+      },
+    });
+    explorerBacktestJobId = null;
+    progressFill.style.width = "100%";
+    progressText.textContent = "Backtest ready.";
+    document.getElementById("btRunResult").innerHTML = `Ready: <a href="backtest.html?id=${done.backtest_id}">\u2192 View Backtest</a>`;
   } catch (err) {
+    explorerBacktestJobId = null;
+    progressFill.style.width = "100%";
+    progressText.textContent = "Backtest failed";
     document.getElementById("btRunResult").textContent = `Error: ${err.message}`;
+  } finally {
+    runBtn.disabled = false;
+    await loadExplorerStrategies();
   }
 };
 
@@ -563,8 +642,9 @@ document.getElementById("btRunBtn").onclick = async () => {
   try {
     setActiveButton("signal", "");
     initSignalLabels();
-    await loadSessions();
+    await initExplorer();
     await loadExplorerStrategies();
+    explorerBtPoll = window.setInterval(loadExplorerStrategies, 3000);
   } catch (err) {
     showError("#status", err);
   }

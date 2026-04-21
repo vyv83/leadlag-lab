@@ -22,6 +22,7 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 from leadlag.backtest.slippage import compute_slippage_bps
 from leadlag.contracts import (
@@ -146,7 +147,7 @@ def run_backtest(
     t_start_ms = int(session.quality.get("t_start_ms") or session.meta.get("t_start_ms") or 0)
 
     vwap_df = session.vwap_df
-    bbo_lookup = _BboLookup(session.bbo_df)
+    bbo_lookup = _BboLookup.from_session(session)
 
     events_sorted = sorted(session.events.rows, key=lambda e: e["bin_idx"])
 
@@ -279,32 +280,106 @@ def run_backtest(
 # ─── internals ───
 
 class _BboLookup:
-    """Per-venue sorted BBO frames with binary-search lookup by ts_ms."""
+    """Per-venue BBO arrays with binary-search lookup by ts_ms."""
+
+    COLUMNS = ["ts_ms", "bid_price", "bid_qty", "ask_price", "ask_qty", "venue"]
 
     def __init__(self, bbo_df: Optional[pd.DataFrame]):
-        self.per_venue: dict[str, pd.DataFrame] = {}
+        self.per_venue: dict[str, dict[str, np.ndarray]] = {}
         if bbo_df is None or len(bbo_df) == 0:
             return
-        for venue, g in bbo_df.groupby("venue"):
-            g = g.sort_values("ts_ms").reset_index(drop=True)
-            self.per_venue[venue] = g
+        self._ingest_frame(bbo_df)
+
+    @classmethod
+    def from_session(cls, session: Any) -> "_BboLookup":
+        root = getattr(session, "root_dir", None)
+        if root is not None:
+            path = Path(root) / "bbo.parquet"
+            if path.exists():
+                return cls.from_parquet(path)
+        return cls(getattr(session, "bbo_df", None))
+
+    @classmethod
+    def from_parquet(cls, path: Path | str) -> "_BboLookup":
+        self = cls(None)
+        self._ingest_parquet(path)
+        return self
+
+    def _append_group(self, venue: str, frame: pd.DataFrame, pending: dict[str, dict[str, list[np.ndarray]]]) -> None:
+        slot = pending.setdefault(venue, {
+            "ts_ms": [],
+            "bid_price": [],
+            "bid_qty": [],
+            "ask_price": [],
+            "ask_qty": [],
+        })
+        slot["ts_ms"].append(frame["ts_ms"].to_numpy(dtype=np.int64, copy=False))
+        slot["bid_price"].append(frame["bid_price"].to_numpy(dtype=np.float64, copy=False))
+        slot["bid_qty"].append(frame["bid_qty"].to_numpy(dtype=np.float64, copy=False))
+        slot["ask_price"].append(frame["ask_price"].to_numpy(dtype=np.float64, copy=False))
+        slot["ask_qty"].append(frame["ask_qty"].to_numpy(dtype=np.float64, copy=False))
+
+    def _finalize_pending(self, pending: dict[str, dict[str, list[np.ndarray]]]) -> None:
+        for venue, cols in pending.items():
+            if not cols["ts_ms"]:
+                continue
+            ts_ms = np.concatenate(cols["ts_ms"])
+            bid_price = np.concatenate(cols["bid_price"])
+            bid_qty = np.concatenate(cols["bid_qty"])
+            ask_price = np.concatenate(cols["ask_price"])
+            ask_qty = np.concatenate(cols["ask_qty"])
+            if len(ts_ms) > 1 and np.any(ts_ms[1:] < ts_ms[:-1]):
+                order = np.argsort(ts_ms, kind="stable")
+                ts_ms = ts_ms[order]
+                bid_price = bid_price[order]
+                bid_qty = bid_qty[order]
+                ask_price = ask_price[order]
+                ask_qty = ask_qty[order]
+            self.per_venue[venue] = {
+                "ts_ms": ts_ms,
+                "bid_price": bid_price,
+                "bid_qty": bid_qty,
+                "ask_price": ask_price,
+                "ask_qty": ask_qty,
+            }
+
+    def _ingest_frame(self, bbo_df: pd.DataFrame) -> None:
+        pending: dict[str, dict[str, list[np.ndarray]]] = {}
+        for venue, g in bbo_df.groupby("venue", observed=True, sort=False):
+            if g.empty:
+                continue
+            self._append_group(str(venue), g.sort_values("ts_ms"), pending)
+        self._finalize_pending(pending)
+
+    def _ingest_parquet(self, path: Path | str) -> None:
+        pending: dict[str, dict[str, list[np.ndarray]]] = {}
+        pf = pq.ParquetFile(path)
+        for batch in pf.iter_batches(batch_size=250_000, columns=self.COLUMNS):
+            df = batch.to_pandas(split_blocks=True, self_destruct=True)
+            if df.empty or "venue" not in df.columns:
+                continue
+            for venue, g in df.groupby("venue", observed=True, sort=False):
+                if g.empty:
+                    continue
+                self._append_group(str(venue), g, pending)
+        self._finalize_pending(pending)
 
     def at(self, venue: str, ts_ms: int) -> Optional[dict]:
         g = self.per_venue.get(venue)
-        if g is None or len(g) == 0:
+        if g is None or len(g["ts_ms"]) == 0:
             return None
-        i = int(np.searchsorted(g["ts_ms"].values, ts_ms, side="right")) - 1
+        i = int(np.searchsorted(g["ts_ms"], ts_ms, side="right")) - 1
         if i < 0:
             return None
-        r = g.iloc[i]
-        bid, ask = float(r["bid_price"]), float(r["ask_price"])
+        bid = float(g["bid_price"][i])
+        ask = float(g["ask_price"][i])
         if not (bid > 0 and ask > 0):
             return None
         mid = 0.5 * (bid + ask)
         spread_bps = (ask - bid) / mid * 1e4 if mid > 0 else None
         return {
             "bid_price": bid, "ask_price": ask,
-            "bid_qty": float(r.get("bid_qty", 0.0)), "ask_qty": float(r.get("ask_qty", 0.0)),
+            "bid_qty": float(g["bid_qty"][i]), "ask_qty": float(g["ask_qty"][i]),
             "spread_bps": spread_bps,
         }
 
@@ -628,6 +703,9 @@ def _build_stats(
     losses = df.loc[df["net_pnl_bps"] < 0, "net_pnl_bps"]
     wins_net = df.loc[df["net_pnl_bps"] > 0, "net_pnl_bps"]
     duration_ms = max(1, int(df["exit_ts_ms"].max() - df["entry_ts_ms"].min()))
+    total_net_bps = float(net.sum())
+    max_drawdown_bps = float(min((e["drawdown_bps"] for e in equity), default=0.0))
+    recovery_factor = (total_net_bps / abs(max_drawdown_bps)) if max_drawdown_bps < 0 else None
     stats = {
         "n_trades": len(df),
         "total_trades": len(df),
@@ -637,7 +715,7 @@ def _build_stats(
         "n_limit_filled": int(n_limit_filled),
         "limit_fill_rate": float(n_limit_filled / n_limit_attempts) if n_limit_attempts else None,
         "win_rate": float(wins / len(df)),
-        "total_net_pnl_bps": float(net.sum()),
+        "total_net_pnl_bps": total_net_bps,
         "total_gross_pnl_bps": gross_sum,
         "total_fees_bps": fees_sum,
         "total_fee_bps": fees_sum,
@@ -649,7 +727,8 @@ def _build_stats(
         "std_trade_bps": float(net.std(ddof=0)),
         "sharpe": float(net.mean() / net.std(ddof=0)) if net.std(ddof=0) > 0 else 0.0,
         "profit_factor": float(wins_net.sum() / abs(losses.sum())) if len(losses) and abs(losses.sum()) > 0 else None,
-        "max_drawdown_bps": float(min((e["drawdown_bps"] for e in equity), default=0.0)),
+        "max_drawdown_bps": max_drawdown_bps,
+        "recovery_factor": float(recovery_factor) if recovery_factor is not None else None,
         "max_dd_duration_ms": _max_dd_duration_ms(equity),
         "avg_win_bps": float(wins_net.mean()) if len(wins_net) else None,
         "avg_loss_bps": float(losses.mean()) if len(losses) else None,
@@ -710,6 +789,7 @@ def _empty_stats(n_errors: int, n_skipped_position: int, n_limit_attempts: int, 
         "profit_factor": None,
         "sharpe": 0.0,
         "max_drawdown_bps": 0.0,
+        "recovery_factor": None,
         "max_dd_duration_ms": 0,
         "avg_win_bps": None,
         "avg_loss_bps": None,

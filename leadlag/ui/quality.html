@@ -8,24 +8,9 @@
 <!-- Plotly mode bar is enabled globally in app.js: displayModeBar: true -->
 </head>
 <body>
-<header><h1>leadlag</h1>
-<nav>
-  <a href="dashboard.html">Dashboard</a>
-  <a href="collector.html">Collector</a>
-  <a href="recordings.html">Recordings</a>
-  <a href="explorer.html">Explorer</a>
-  <a href="quality.html" class="active">Quality</a>
-  <a href="strategy.html">Strategies</a>
-  <a href="backtest.html">Backtests</a>
-  <a href="montecarlo.html">Monte Carlo</a>
-  <a href="paper.html">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
-</nav>
-</header>
 <main>
 <section>
   <div class="toolbar">
-    <label>Analysis <select id="session"></select></label>
     <button id="onlyBad">Show only bad/warning</button>
     <button id="showAll">Show all</button>
     <a id="explorerLink" class="button-link" href="#">Open Session in Explorer</a>
@@ -81,24 +66,20 @@
 </section>
 </main>
 <script src="app.js"></script>
+<script src="sidebar.js"></script>
 <script>
-let sessions = [];
 let payload = {};
 let rows = [];
 let badOnly = false;
+let currentSessionId = "";
 
 async function init() {
-  sessions = await fetchJSON("/api/sessions");
-  const sel = document.getElementById("session");
-  if (!sessions.length) {
-    document.getElementById("cards").innerHTML = `<div class="banner">No analyses yet.</div>`;
+  currentSessionId = qs("session");
+  if (!currentSessionId) {
+    document.getElementById("cards").innerHTML = `<div class="banner">Select an Analysis from the sidebar [Q] to view quality.</div>`;
     return;
   }
-  sel.innerHTML = sessions.map(s => `<option value="${s.id}">${s.id}</option>`).join("");
-  const pre = qs("session");
-  if (pre) sel.value = pre;
-  sel.onchange = () => load(sel.value);
-  await load(sel.value);
+  await load(currentSessionId);
 }
 
 async function load(id) {
@@ -113,6 +94,19 @@ async function load(id) {
   renderCharts();
   renderGaps(q.timeline_gaps || []);
   renderBbo();
+  renderPageTitle(id, q, meta);
+}
+
+function renderPageTitle(id, q, meta) {
+  if (!window.insertPageTitle) return;
+  const d = q.t_start_ms ? new Date(Number(q.t_start_ms)) : null;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const dateStr = d ? `${months[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}` : "?";
+  const nEv = (meta.n_events || 0);
+  const durH = q.duration_s ? `${(q.duration_s / 3600).toFixed(1)}h` : "";
+  const metaParts = [dateStr, `${nEv} events`, durH].filter(Boolean);
+  const actions = `<a href="explorer.html?session=${encodeURIComponent(id)}" class="button-link">→ Explore Events</a>`;
+  window.insertPageTitle("Analysis", metaParts.join(" · "), actions);
 }
 
 function renderCards(q, meta) {
@@ -120,7 +114,7 @@ function renderCards(q, meta) {
   const warn = rows.filter(r => r.flag === "warning").length;
   const bad = rows.filter(r => r.flag === "bad").length;
   fillCards("cards", [
-    ["Analysis", meta.session_id || document.getElementById("session").value],
+    ["Analysis", meta.session_id || currentSessionId],
     ["Time range", `${utc(q.t_start_ms)} → ${utc(q.t_end_ms)}`],
     ["Duration", `${fmt(q.duration_s, 0)}s`],
     ["Venues", rows.length],
@@ -135,8 +129,8 @@ function renderVenueTable() {
   const visible = badOnly ? rows.filter(r => r.flag !== "good") : rows;
   fillTable("#venues", visible, r => {
     const hint = qualityHint(r);
-    const hintTd = el("td", { className: hint.cls });
-    hintTd.textContent = hint.text;
+    const hintTd = hint.elem || el("td", { className: hint.cls });
+    if (!hint.elem) hintTd.textContent = hint.text;
     return [
       r.venue, r.role, r.flag, (r.flag_reasons || []).join(", "), hintTd, r.ticks_total,
       fmt(r.ticks_per_s_avg), fmt(r.ticks_per_s_max), `${fmt(r.bin_coverage_pct)}%`,
@@ -264,7 +258,13 @@ function renderQualityDecision(sessionId) {
 document.getElementById("onlyBad").onclick = () => { badOnly = true; renderVenueTable(); };
 document.getElementById("showAll").onclick = () => { badOnly = false; renderVenueTable(); };
 function qualityHint(r) {
-  if (r.flag === "bad") return { cls: "no", text: "exclude from strategy" };
+  const disableLink = `<a href="collector.html?action=disable&venue=${encodeURIComponent(r.venue)}" style="margin-left:4px;font-size:10px">Disable in Collector →</a>`;
+  if (r.flag === "bad") {
+    const td = document.createElement("td");
+    td.className = "no";
+    td.innerHTML = `exclude from strategy${disableLink}`;
+    return { cls: "no", text: "exclude from strategy", elem: td };
+  }
   if (!r.bbo_available) return { cls: "ping-warn", text: "BBO unavailable — avoid for execution-cost strategies" };
   if (Number(r.bin_coverage_pct || 0) < 50) return { cls: "ping-warn", text: "low coverage — use with caution" };
   if (r.flag === "warning") return { cls: "ping-warn", text: "check issues before using" };
@@ -275,7 +275,7 @@ document.getElementById("exportReport").onclick = () => {
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `${document.getElementById("session").value}_quality.json`;
+  a.download = `${currentSessionId}_quality.json`;
   a.click();
   URL.revokeObjectURL(a.href);
 };

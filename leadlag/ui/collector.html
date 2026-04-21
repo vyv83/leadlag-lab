@@ -6,27 +6,13 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><h1>leadlag</h1>
-<nav>
-  <a href="dashboard.html">Dashboard</a>
-  <a href="collector.html" class="active">Collector</a>
-  <a href="recordings.html">Recordings</a>
-  <a href="explorer.html">Explorer</a>
-  <a href="quality.html">Quality</a>
-  <a href="strategy.html">Strategies</a>
-  <a href="backtest.html">Backtests</a>
-  <a href="montecarlo.html">Monte Carlo</a>
-  <a href="paper.html">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
-</nav>
-</header>
 <main>
 <section>
   <h2>Control</h2>
   <div class="toolbar">
-    <label>Duration h <input id="durationHours" type="number" min="0.1" step="0.1" value="1" style="width:48px"></label>
-    <label>Bin ms <input id="binSize" type="number" min="10" step="10" value="50" style="width:48px"></label>
-    <label>Rotation m <input id="rotation" type="number" min="1" step="1" value="30" style="width:40px"></label>
+    <label>Duration h <input id="durationHours" class="compact-number" type="number" min="0.1" step="0.1" value="1"></label>
+    <label>Bin ms <input id="binSize" class="compact-number" type="number" min="10" step="10" value="50"></label>
+    <label>Rotation m <input id="rotation" class="compact-number" type="number" min="1" step="1" value="30"></label>
     <span style="color:#30363d">│</span>
     <button id="selectLeaders">Leaders</button>
     <button id="selectFollowers">Followers</button>
@@ -82,6 +68,7 @@
 </section>
 </main>
 <script src="app.js"></script>
+<script src="sidebar.js"></script>
 <script>
 let venues = [];
 let statusPayload = {};

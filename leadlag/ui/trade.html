@@ -8,19 +8,6 @@
 <!-- Plotly mode bar is enabled globally in app.js: displayModeBar: true -->
 </head>
 <body>
-<header><h1>leadlag</h1>
-<nav>
-  <a href="dashboard.html">Dashboard</a>
-  <a href="collector.html">Collector</a>
-  <a href="explorer.html">Explorer</a>
-  <a href="quality.html">Quality</a>
-  <a href="strategy.html">Strategies</a>
-  <a href="backtest.html" class="active">Backtests</a>
-  <a href="montecarlo.html">Monte Carlo</a>
-  <a href="paper.html">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
-</nav>
-</header>
 <main>
 <section>
   <div class="toolbar">
@@ -47,6 +34,7 @@
 </section>
 </main>
 <script src="app.js"></script>
+<script src="sidebar.js"></script>
 <script>
 let payload = null;
 
@@ -68,6 +56,7 @@ async function loadTrade() {
     `explorer.html?session=${meta.session_id}&event=${trade.signal_bin_idx}&mode=trade&backtest=${bt}&trade=${trade.trade_id}`;
   setNav("prevLink", payload.prev_trade_id);
   setNav("nextLink", payload.next_trade_id);
+  renderPageTitle();
   renderHeader();
   renderMetrics();
   renderChart();
@@ -82,6 +71,26 @@ function setNav(id, targetTradeId) {
     a.classList.remove("disabled");
     a.href = `trade.html?backtest=${btId()}&trade=${targetTradeId}`;
   }
+}
+
+function renderPageTitle() {
+  if (!window.insertPageTitle) return;
+  const trade = payload.trade;
+  const meta = payload.meta || {};
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const d = trade.entry_ts_ms ? new Date(Number(trade.entry_ts_ms)) : null;
+  const dateStr = d ? `${months[d.getUTCMonth()]} ${d.getUTCDate()}` : "?";
+  const stratName = meta.strategy_name || "strategy";
+  const prevId = payload.prev_trade_id;
+  const nextId = payload.next_trade_id;
+  const bt = btId();
+  const prevHref = prevId != null ? `trade.html?backtest=${bt}&trade=${prevId}` : null;
+  const nextHref = nextId != null ? `trade.html?backtest=${bt}&trade=${nextId}` : null;
+  const actions = [
+    prevHref ? `<a href="${prevHref}" class="button-link">← Prev</a>` : `<span class="button-link disabled">← Prev</span>`,
+    nextHref ? `<a href="${nextHref}" class="button-link">Next →</a>` : `<span class="button-link disabled">Next →</span>`,
+  ].join("");
+  window.insertPageTitle(`Trade #${trade.trade_id}`, `${stratName} · ${dateStr}`, actions);
 }
 
 function renderHeader() {

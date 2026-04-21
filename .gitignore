@@ -18,21 +18,36 @@ env/
 .env
 .env.*
 
-# Runtime data and generated trading artifacts
+# Runtime data — ALL generated/trading artifacts under data/
 data/ticks/
 data/bbo/
 data/sessions/
 data/backtest/
 data/paper/
+data/strategies/
+data/.backtest_jobs/
+data/.analysis_jobs/
 data/.system_history.jsonl
 data/.ping_cache.json
 data/.collector_status.json
 data/.collector_status.json.tmp
 data/.paper_status.json
 data/.paper_status.json.tmp
+data/.collector_log.jsonl
 data/.collector.sock
+data/.paper_venues.json
 data/**/*.parquet
 data/**/*.jsonl
+
+# Jupyter — entire jupyter_home is runtime state
+data/jupyter_home/
+
+# Jupyter notebook checkpoints (any location)
+.ipynb_checkpoints/
+
+# Notebooks — only base strategy_dev.ipynb is tracked
+notebooks/*.ipynb
+!notebooks/strategy_dev.ipynb
 
 # Logs and temporary files
 *.log
@@ -40,16 +55,6 @@ data/**/*.jsonl
 *.swp
 *.swo
 .DS_Store
-
-# Jupyter runtime noise
-.ipynb_checkpoints/
-data/jupyter_home/.ipython/
-data/jupyter_home/.jupyter/lab/workspaces/
-data/jupyter_home/.jupyter/migrated
-data/jupyter_home/runtime/
-
-# Data runtime files
-data/.paper_venues.json
 
 # Debug output
 debug/
@@ -60,3 +65,7 @@ debug/
 *.jpeg
 *.gif
 manual_test_screenshots_*/
+
+# IDE
+.vscode/
+.idea/

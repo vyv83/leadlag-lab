@@ -3,6 +3,15 @@
 const BASE = (location.pathname.match(/^(.*?)\/ui\//) || ["", ""])[1];
 function api(path) { return BASE + (path.startsWith("/") ? path : "/" + path); }
 function apiFetch(path, init) { return fetch(api(path), init); }
+const JUPYTER_BASE = `${BASE}/lab`;
+const JUPYTER_LAB_ROUTE = `${JUPYTER_BASE}/lab`;
+function jupyterLabUrl() { return `${JUPYTER_LAB_ROUTE}/`; }
+function notebookUrl(name) {
+  return name ? `${JUPYTER_LAB_ROUTE}/tree/${encodeURIComponent(name)}.ipynb` : jupyterLabUrl();
+}
+function strategyTemplateUrl() {
+  return notebookUrl("strategy_dev");
+}
 
 async function fetchJSON(url) {
   const full = url.startsWith("/api") ? api(url) : url;
@@ -27,6 +36,26 @@ async function postJSON(url, body) {
     throw new Error(`${full}: ${r.status} ${detail}`);
   }
   return r.json();
+}
+
+async function waitForBacktestJob(jobId, opts = {}) {
+  const timeoutMs = Number(opts.timeoutMs || 10 * 60 * 1000);
+  const intervalMs = Number(opts.intervalMs || 1000);
+  const onUpdate = typeof opts.onUpdate === "function" ? opts.onUpdate : null;
+  const started = Date.now();
+  while (true) {
+    const status = await fetchJSON(`/api/backtest-jobs/${encodeURIComponent(jobId)}`);
+    if (onUpdate) onUpdate(status);
+    if (status.status === "completed") return status;
+    if (status.status === "failed") {
+      const msg = status.error ? JSON.stringify(status.error) : (status.message || "Backtest failed");
+      throw new Error(msg);
+    }
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(`Backtest job timeout: ${jobId}`);
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
 }
 
 /* ── Shared helpers ── */

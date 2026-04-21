@@ -8,20 +8,6 @@
 <!-- Plotly mode bar is enabled globally in app.js: displayModeBar: true -->
 </head>
 <body>
-<header><h1>leadlag</h1>
-<nav>
-  <a href="dashboard.html">Dashboard</a>
-  <a href="collector.html">Collector</a>
-  <a href="recordings.html">Recordings</a>
-  <a href="explorer.html">Explorer</a>
-  <a href="quality.html">Quality</a>
-  <a href="strategy.html">Strategies</a>
-  <a href="backtest.html">Backtests</a>
-  <a href="montecarlo.html" class="active">Monte Carlo</a>
-  <a href="paper.html">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
-</nav>
-</header>
 <main>
 <section>
   <div class="toolbar">
@@ -51,6 +37,10 @@
   <span class="hint">Significance:</span>
   <span id="mcDecisionMsg">—</span>
   <a id="mcPaperLink" href="paper.html" class="button-link">Start Paper Trading →</a>
+  <span id="mcLowConfHints" hidden style="display:contents">
+    <a href="/leadlag-lab/lab/" target="_blank" class="button-link">Refine strategy in Notebook ↗</a>
+    <a href="recordings.html" class="button-link">Run on more data →</a>
+  </span>
   <a href="/leadlag-lab/lab/" target="_blank" class="hint" style="margin-left:8px">← Revise in Notebook ↗</a>
 </div>
 
@@ -66,6 +56,7 @@
 </section>
 </main>
 <script src="app.js"></script>
+<script src="sidebar.js"></script>
 <script>
 let backtests = [];
 let currentId = qs("backtest");
@@ -99,6 +90,7 @@ async function loadBacktest(id) {
   meta = await fetchJSON(`/api/backtests/${id}/meta`);
   equity = await fetchJSON(`/api/backtests/${id}/equity`);
   mc = await fetchJSON(`/api/backtests/${id}/montecarlo`);
+  renderPageTitle();
   if (!mc || !mc.n_simulations) {
     document.getElementById("cards").hidden = true;
     document.getElementById("charts").hidden = true;
@@ -124,6 +116,7 @@ async function runMonteCarlo() {
       seed: Number(document.getElementById("seed").value || 42),
     });
     await loadBacktest(currentId);
+    if (typeof refreshSidebar === "function") refreshSidebar(true);
   } catch (err) {
     showError("#status", err);
   } finally {
@@ -193,6 +186,16 @@ function renderCharts() {
   histogram("ddHist", mc.sim_max_dds || [], "Max Drawdown", "bps", mc.real_max_dd);
 }
 
+function renderPageTitle() {
+  if (!window.insertPageTitle) return;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const d = meta.backtest_date_utc ? new Date(meta.backtest_date_utc) :
+            meta.created_at ? new Date(meta.created_at) : null;
+  const dateStr = d ? `${months[d.getUTCMonth()]} ${d.getUTCDate()}` : "?";
+  const stratName = meta.strategy_name || currentId;
+  window.insertPageTitle("Monte Carlo", `${stratName} × ${dateStr}`, "");
+}
+
 function renderMcDecision() {
   const strip = document.getElementById("mcDecision");
   strip.hidden = false;
@@ -200,22 +203,41 @@ function renderMcDecision() {
   const prob = Number(mc.prob_of_profit || 0);
   const warnings = mc.warnings || [];
   const isLowSample = warnings.includes("n_trades_lt_20_monte_carlo_is_low_confidence");
-  let msg, cls;
+  const strategyName = (meta && meta.strategy_name) || "";
+  let msg, cls, isSignificant;
+
   if (isLowSample) {
-    msg = "Low confidence: fewer than 20 trades. Expand data in Notebook first.";
+    msg = "Low confidence: fewer than 20 trades. Expand data or loosen filters first.";
     cls = "ping-warn";
+    isSignificant = false;
   } else if (pval < 0.05) {
     msg = `p-value ${(pval * 100).toFixed(1)}% — strategy shows statistical significance. Ready for Paper Trading.`;
     cls = "ok";
+    isSignificant = true;
   } else if (prob > 0.6) {
     msg = `p-value ${(pval * 100).toFixed(1)}% — not significant yet, but ${(prob * 100).toFixed(0)}% probability of profit. Refine in Notebook.`;
     cls = "ping-warn";
+    isSignificant = false;
   } else {
     msg = `p-value ${(pval * 100).toFixed(1)}% — results are not statistically significant. Revise strategy in Notebook.`;
     cls = "no";
+    isSignificant = false;
   }
   document.getElementById("mcDecisionMsg").textContent = msg;
   document.getElementById("mcDecisionMsg").className = cls;
+
+  const paperLink = document.getElementById("mcPaperLink");
+  paperLink.href = strategyName ? `paper.html?strategy=${encodeURIComponent(strategyName)}` : "paper.html";
+  paperLink.hidden = !isSignificant;
+
+  const lowConfHints = document.getElementById("mcLowConfHints");
+  if (!isSignificant && !isLowSample) {
+    lowConfHints.hidden = false;
+  } else if (isLowSample) {
+    lowConfHints.hidden = false;
+  } else {
+    lowConfHints.hidden = true;
+  }
 }
 
 function renderWarnings() {
@@ -252,6 +274,7 @@ document.getElementById("deleteMc").onclick = async () => {
   try {
     await apiFetch(`/api/backtests/${bt_root}/montecarlo`, { method: "DELETE" });
     await loadBacktest(currentId);
+    if (typeof refreshSidebar === "function") refreshSidebar(true);
   } catch (err) {
     showError("#status", err);
   }

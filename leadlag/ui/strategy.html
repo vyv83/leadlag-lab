@@ -7,24 +7,11 @@
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>leadlag</h1>
-<nav>
-  <a href="dashboard.html">Dashboard</a>
-  <a href="collector.html">Collector</a>
-  <a href="recordings.html">Recordings</a>
-  <a href="explorer.html">Explorer</a>
-  <a href="quality.html">Quality</a>
-  <a href="strategy.html" class="active">Strategies</a>
-  <a href="backtest.html">Backtests</a>
-  <a href="montecarlo.html">Monte Carlo</a>
-  <a href="paper.html">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
-</nav>
-</header>
 <main>
 <section>
   <h2>Strategies</h2>
   <div id="status" class="muted">Loading...</div>
+  <div id="strategyMessage" hidden></div>
   <div class="toolbar">
     <button id="compareBtn">Compare Selected</button>
     <span class="muted">Notebook remains the lab; this screen runs and compares saved strategy files.</span>
@@ -53,12 +40,30 @@
 
 </main>
 <script src="app.js"></script>
+<script src="sidebar.js"></script>
 <script>
 let sessions = [];
 let backtests = [];
 let allStrategies = [];
 let selectedStratName = null;
 let notebooks = [];
+let backtestStatus = { running: false };
+let backtestStatusPoll = null;
+let activeBacktestJobId = null;
+const sessionMetaCache = new Map();
+
+function showStrategyMessage(text, kind = "muted") {
+  const node = document.getElementById("strategyMessage");
+  if (!text) {
+    node.hidden = true;
+    node.className = "";
+    node.textContent = "";
+    return;
+  }
+  node.hidden = false;
+  node.className = kind === "error" ? "error" : kind === "banner" ? "banner" : "muted";
+  node.textContent = text;
+}
 
 function btSummary(stratName) {
   const candidates = backtests.filter(b => b.strategy === stratName);
@@ -72,18 +77,49 @@ function btForStrat(name) {
 }
 
 async function loadAll() {
-  const [strats, sess, bts, nb] = await Promise.all([
+  const [strats, sess, bts, nb, btStatus] = await Promise.all([
     fetchJSON("/api/strategies"),
     fetchJSON("/api/sessions"),
     fetchJSON("/api/backtests"),
     fetchJSON("/api/notebooks").catch(() => []),
+    fetchJSON("/api/backtests/status").catch(() => ({ running: false })),
   ]);
   sessions = sess;
   backtests = bts;
   allStrategies = strats;
   notebooks = nb;
+  backtestStatus = btStatus || { running: false };
   document.getElementById("status").textContent = "";
   renderTable(strats);
+}
+
+function backtestStatusText() {
+  if (!backtestStatus || !backtestStatus.running) return "";
+  const parts = ["Backtest running"];
+  if (backtestStatus.strategy_name) parts.push(backtestStatus.strategy_name);
+  if (backtestStatus.session_id) parts.push(backtestStatus.session_id);
+  return parts.join(" · ");
+}
+
+function backtestJobText(job) {
+  const parts = [];
+  if (job.status) parts.push(job.status);
+  if (job.message) parts.push(job.message);
+  return parts.join(" · ");
+}
+
+function backtestJobPct(job) {
+  return Math.max(2, Math.min(100, Math.round((Number(job?.progress) || 0) * 100)));
+}
+
+async function refreshBacktestStatus() {
+  const next = await fetchJSON("/api/backtests/status").catch(() => ({ running: false }));
+  const prevKey = JSON.stringify(backtestStatus || {});
+  const nextKey = JSON.stringify(next || {});
+  backtestStatus = next || { running: false };
+  if (prevKey !== nextKey && selectedStratName) {
+    renderDetail(selectedStratName);
+  }
 }
 
 function hasNotebook(name) {
@@ -138,11 +174,21 @@ function renderTable(strats) {
     ].join(" ");
 
     const td10 = el("td");
-    td10.style.whiteSpace = "nowrap";
-    const runBtn = el("button", { onclick: (e) => { e.stopPropagation(); selectStrategy(s.name); } }, ["Detail"]);
-    td10.appendChild(runBtn);
+    td10.className = "table-actions";
+    if (hasNotebook(s.name)) {
+      td10.appendChild(el("a", {
+        href: notebookUrl(s.name),
+        target: "_blank",
+        class: "button-link",
+        onclick: (e) => e.stopPropagation(),
+      }, ["Notebook ↗"]));
+    }
     if (latest) {
-      td10.appendChild(el("a", { href: `backtest.html?id=${latest.id}`, class: "button-link", style: "margin-left:4px" }, ["View"]));
+      td10.appendChild(el("a", {
+        href: `backtest.html?id=${latest.id}`,
+        class: "button-link",
+        onclick: (e) => e.stopPropagation(),
+      }, ["Latest BT"]));
     }
 
     const td2 = el("td", { className: "muted" }); td2.textContent = s.version || "\u2014";
@@ -168,16 +214,246 @@ function selectStrategy(name) {
   renderDetail(name);
 }
 
+function renderPageTitle(strat) {
+  if (!window.insertPageTitle) return;
+  const ver = strat.version ? `v${strat.version}` : "";
+  window.insertPageTitle(strat.name, ver, "");
+}
+
+function shortMonthDate(dateStr) {
+  if (!dateStr) return "Unknown date";
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function describeSession(sessionId) {
+  const session = sessions.find(s => s.id === sessionId);
+  if (!session) {
+    return {
+      title: sessionId || "Unknown analysis",
+      detail: "Analysis metadata unavailable",
+      link: sessionId ? `explorer.html?session=${encodeURIComponent(sessionId)}` : "",
+    };
+  }
+  const meta = [];
+  if (session.n_events != null) meta.push(`${session.n_events} events`);
+  if (session.n_venues != null) meta.push(`${session.n_venues} venues`);
+  if (session.duration_h != null) meta.push(`${fmt(session.duration_h, 1)}h`);
+  return {
+    title: `${shortMonthDate(session.date)} · ${session.id}`,
+    detail: meta.join(" · "),
+    link: `explorer.html?session=${encodeURIComponent(session.id)}`,
+    session,
+  };
+}
+
+function backtestCreatedLabel(bt) {
+  if (!bt) return "—";
+  if (bt.backtest_date_utc) {
+    const d = new Date(bt.backtest_date_utc);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toISOString().slice(0, 16).replace("T", " ");
+    }
+  }
+  if (bt.created_at && /^\d{8}_\d{6}$/.test(bt.created_at)) {
+    return `${bt.created_at.slice(0, 4)}-${bt.created_at.slice(4, 6)}-${bt.created_at.slice(6, 8)} ${bt.created_at.slice(9, 11)}:${bt.created_at.slice(11, 13)}`;
+  }
+  return bt.created_at || "—";
+}
+
+function valueKind(value) {
+  if (value && typeof value === "object") return "json";
+  if (typeof value === "number") return Number.isInteger(value) ? "int" : "float";
+  if (typeof value === "boolean") return "bool";
+  return "string";
+}
+
+function parseTypedValue(raw, kind) {
+  if (kind === "int") {
+    const n = Number(raw);
+    if (!Number.isInteger(n)) throw new Error(`Expected integer, got "${raw}"`);
+    return n;
+  }
+  if (kind === "float") {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) throw new Error(`Expected number, got "${raw}"`);
+    return n;
+  }
+  if (kind === "bool") {
+    if (raw === "true") return true;
+    if (raw === "false") return false;
+    throw new Error(`Expected true or false, got "${raw}"`);
+  }
+  if (kind === "json") {
+    return JSON.parse(raw);
+  }
+  return raw;
+}
+
+function renderParamChip(label, value, tone = "") {
+  if (value === undefined || value === null || value === "") return "";
+  return `<span class="param-chip ${tone}"><span class="param-chip-label">${escapeHtml(label)}</span>${escapeHtml(typeof value === "object" ? JSON.stringify(value) : String(value))}</span>`;
+}
+
+function summarizeParams(params = {}, opts = {}) {
+  const entries = [];
+  const preferred = opts.preferredKeys || ["signal", "signals", "follower", "venue", "min_magnitude", "hold_ms", "entry_type", "slippage_model", "position_mode"];
+  const remaining = new Set(Object.keys(params || {}));
+  preferred.forEach(key => {
+    if (!(key in params)) return;
+    remaining.delete(key);
+    entries.push([key, params[key]]);
+  });
+  [...remaining].sort().forEach(key => entries.push([key, params[key]]));
+  const limit = opts.limit ?? entries.length;
+  return entries.slice(0, limit).map(([key, value]) => renderParamChip(key, value, opts.tone || "")).join("");
+}
+
+function renderSessionOption(session, selectedId) {
+  const details = [];
+  if (session.n_events != null) details.push(`${session.n_events} events`);
+  if (session.n_venues != null) details.push(`${session.n_venues} venues`);
+  if (session.duration_h != null) details.push(`${fmt(session.duration_h, 1)}h`);
+  const label = `${shortMonthDate(session.date)} · ${details.join(" · ")}`;
+  return `<option value="${escapeHtml(session.id)}" ${session.id === selectedId ? "selected" : ""}>${escapeHtml(label)}</option>`;
+}
+
+async function fetchSessionMetaCached(sessionId) {
+  if (!sessionId) return null;
+  if (sessionMetaCache.has(sessionId)) return sessionMetaCache.get(sessionId);
+  const promise = fetchJSON(`/api/sessions/${encodeURIComponent(sessionId)}/meta`).catch(() => null);
+  sessionMetaCache.set(sessionId, promise);
+  return promise;
+}
+
+function signalChoices(sessionMeta) {
+  const leaders = sessionMeta?.leaders || [];
+  const short = (name, fallback) => String(name || fallback || "")
+    .replace(/\s+(Perp|Spot)\b/g, "")
+    .trim();
+  const first = short(leaders[0], "Leader A");
+  const second = short(leaders[1], "Leader B");
+  return [
+    { value: "A", label: `A · ${first}` },
+    { value: "B", label: `B · ${second}` },
+    { value: "C", label: leaders.length >= 2 ? `C · ${first} + ${second}` : "C · Combined leaders" },
+  ];
+}
+
+function ensureCurrentOption(options, currentValue) {
+  const values = new Set(options.map(opt => opt.value));
+  if (currentValue && !values.has(currentValue)) {
+    return [{ value: currentValue, label: currentValue }, ...options];
+  }
+  return options;
+}
+
+function renderSelectField(id, key, options, selectedValue) {
+  const rendered = ensureCurrentOption(options, selectedValue);
+  const wide = key === "signal" || key === "follower";
+  return `
+    <div class="param-field ${wide ? "param-field-wide" : ""}">
+      <label for="${id}">${escapeHtml(key)}</label>
+      <div class="select-shell compact">
+        <select id="${id}" data-override-key="${escapeHtml(key)}" data-override-kind="string">
+          ${rendered.map(opt => `<option value="${escapeHtml(opt.value)}" ${String(opt.value) === String(selectedValue) ? "selected" : ""}>${escapeHtml(opt.label)}</option>`).join("")}
+        </select>
+        <span class="select-shell-caret">\u25BE</span>
+      </div>
+    </div>
+  `;
+}
+
+async function updateDetailSessionMeta() {
+  const select = document.getElementById("detailSession");
+  const target = document.getElementById("detailSessionMeta");
+  if (!select || !target) return;
+  const info = describeSession(select.value);
+  const session = info.session;
+  const sessionMeta = await fetchSessionMetaCached(select.value);
+  const chips = session ? [
+    renderParamChip("events", session.n_events, "tone-blue"),
+    renderParamChip("venues", session.n_venues, "tone-blue"),
+    renderParamChip("duration", session.duration_h != null ? `${fmt(session.duration_h, 1)}h` : null, "tone-blue"),
+    renderParamChip("BBO", session.has_bbo ? "yes" : "no", session.has_bbo ? "tone-green" : "tone-red"),
+  ].join("") : "";
+  const followers = sessionMeta?.followers || sessionMeta?.venues || session?.venues || [];
+  const followerSelect = document.getElementById("override-follower");
+  if (followerSelect) {
+    const current = followerSelect.value;
+    const rendered = ensureCurrentOption(followers.map(v => ({ value: v, label: v })), current);
+    followerSelect.innerHTML = rendered.map(opt => `<option value="${escapeHtml(opt.value)}" ${String(opt.value) === String(current) ? "selected" : ""}>${escapeHtml(opt.label)}</option>`).join("");
+  }
+  const signalSelect = document.getElementById("override-signal");
+  if (signalSelect) {
+    const current = signalSelect.value;
+    const rendered = ensureCurrentOption(signalChoices(sessionMeta), current);
+    signalSelect.innerHTML = rendered.map(opt => `<option value="${escapeHtml(opt.value)}" ${String(opt.value) === String(current) ? "selected" : ""}>${escapeHtml(opt.label)}</option>`).join("");
+  }
+  target.innerHTML = `
+    <div class="strategy-card-head">
+      <div>
+        <div class="analysis-preview-title">${escapeHtml(info.title)}</div>
+        <div class="analysis-preview-meta">${escapeHtml(info.detail)}</div>
+      </div>
+      ${info.link ? `<a class="button-link button-secondary" href="${info.link}">Open Analysis</a>` : ""}
+    </div>
+    <div class="chip-row">${chips}</div>
+  `;
+}
+
+function collectBacktestOverrides(strat) {
+  const fields = document.querySelectorAll("[data-override-key]");
+  const base = {
+    ...(strat.params || {}),
+    entry_type: strat.entry_type || strat.params?.entry_type || "market",
+    slippage_model: strat.slippage_model || strat.params?.slippage_model || "half_spread",
+    position_mode: strat.position_mode || strat.params?.position_mode || "reject",
+    fixed_slippage_bps: strat.params?.fixed_slippage_bps ?? 1.0,
+  };
+  const override = {};
+  for (const field of fields) {
+    const key = field.dataset.overrideKey;
+    const kind = field.dataset.overrideKind || "string";
+    const raw = String(field.value ?? "").trim();
+    if (!raw) continue;
+    const parsed = parseTypedValue(raw, kind);
+    const baseValue = base[key];
+    const same = JSON.stringify(parsed) === JSON.stringify(baseValue);
+    if (!same) override[key] = parsed;
+  }
+  return override;
+}
+
 async function renderDetail(name) {
   const panel = document.getElementById("detailPanel");
   const content = document.getElementById("detailContent");
   panel.hidden = false;
   const strat = allStrategies.find(s => s.name === name);
   if (!strat) { panel.hidden = true; return; }
+  renderPageTitle(strat);
   const bt = btSummary(name);
-  const stratBts = btForStrat(name);
+  const stratBts = btForStrat(name).slice().sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
   const nbExists = hasNotebook(name);
   const p = strat.params || {};
+  const runParamKeys = Object.keys(p);
+  const execDefaults = {
+    entry_type: strat.entry_type || p.entry_type || "market",
+    slippage_model: strat.slippage_model || p.slippage_model || "half_spread",
+    position_mode: strat.position_mode || p.position_mode || "reject",
+    fixed_slippage_bps: p.fixed_slippage_bps ?? 1.0,
+  };
 
   let html = `<div class="section-group">`;
   html += `<div class="toolbar"><strong style="font-size:13px">${name}</strong>`;
@@ -185,61 +461,126 @@ async function renderDetail(name) {
   html += `</div>`;
 
   // Notebook row
-  html += `<div class="toolbar" style="margin-bottom:6px">`;
+  html += `<div class="action-group" style="margin-bottom:6px">`;
   if (nbExists) {
     html += `<span class="ok">\u2713 ${name}.ipynb</span>`;
-    html += `<a href="/leadlag-lab/lab/tree/notebooks/${name}.ipynb" target="_blank" class="button-link">Open \u2197</a>`;
+    html += `<a href="${notebookUrl(name)}" target="_blank" class="button-link button-secondary">Open Notebook \u2197</a>`;
   } else {
     html += `<span class="ping-warn">No notebook \u2014 create in Jupyter</span>`;
-    html += `<a href="/leadlag-lab/lab/tree/notebooks/strategy_dev.ipynb" target="_blank" class="button-link">Open template \u2197</a>`;
+    html += `<a href="${strategyTemplateUrl()}" target="_blank" class="button-link button-secondary">Open Template \u2197</a>`;
   }
   html += `</div>`;
 
-  // Params
   if (Object.keys(p).length) {
-    html += `<h3>Params</h3><div class="kv compact">`;
-    for (const [k, v] of Object.entries(p)) {
-      const display = typeof v === "object" ? JSON.stringify(v) : String(v);
-      html += `<div class="k">${k}</div><div>${display}</div>`;
-    }
+    html += `<div class="detail-section">`;
+    html += `<h3>Strategy Setup</h3>`;
+    html += `<div class="chip-row">${summarizeParams({
+      ...p,
+      entry_type: strat.entry_type || p.entry_type || "market",
+      slippage_model: strat.slippage_model || p.slippage_model || "half_spread",
+      position_mode: strat.position_mode || p.position_mode || "reject",
+    }, { limit: 10 })}</div>`;
     html += `</div>`;
   }
 
-  // Run Backtest inline
+  const latest = btSummary(name);
+  const preferredSessionId = latest && sessions.some(s => s.id === latest.session_id)
+    ? latest.session_id
+    : (sessions[0] ? sessions[0].id : "");
   html += `<h3 style="margin-top:8px">Run Backtest</h3>`;
-  html += `<div class="toolbar" style="flex-wrap:wrap">`;
-  html += `<label>Analysis <select id="detailSession">`;
-  sessions.forEach(s => {
-    const recommended = (s.n_events || 0) > 50 ? " \u2190 recommended" : "";
-    html += `<option value="${s.id}">${s.id} \u00b7 ${s.n_events || 0} events${recommended}</option>`;
+  html += `<div class="action-panel">`;
+  html += `<div class="strategy-run-grid">`;
+  html += `<div class="strategy-card strategy-card-accent">`;
+  html += `<div class="strategy-card-head"><div><h3>Analysis</h3><div class="muted">Pick the analysis snapshot used for this run.</div></div></div>`;
+  html += `<div class="select-shell">`;
+  html += `<select id="detailSession">`;
+  sessions.forEach(s => { html += renderSessionOption(s, preferredSessionId); });
+  html += `</select>`;
+  html += `<span class="select-shell-caret">\u25BE</span>`;
+  html += `</div>`;
+  html += `<div id="detailSessionMeta" class="analysis-preview"></div>`;
+  html += `</div>`;
+
+  html += `<div class="strategy-card">`;
+  html += `<div class="strategy-card-head"><div><h3>Params For This Run</h3><div class="muted">Edit current strategy params directly before queueing a new backtest.</div></div></div>`;
+  html += `<div class="param-grid">`;
+  runParamKeys.forEach(key => {
+    const value = p[key];
+    const kind = valueKind(value);
+    if (key === "signal") {
+      html += renderSelectField("override-signal", key, signalChoices(null), value);
+      return;
+    }
+    if (key === "follower") {
+      const options = (sessions.find(s => s.id === preferredSessionId)?.venues || []).map(v => ({ value: v, label: v }));
+      html += renderSelectField("override-follower", key, options, value);
+      return;
+    }
+    html += `<div class="param-field">`;
+    html += `<label for="override-${escapeHtml(key)}">${escapeHtml(key)}</label>`;
+    html += `<input id="override-${escapeHtml(key)}" data-override-key="${escapeHtml(key)}" data-override-kind="${kind}" value="${escapeHtml(typeof value === "object" ? JSON.stringify(value) : String(value))}">`;
+    html += `</div>`;
   });
-  html += `</select></label>`;
-  html += `<label>Override <input id="detailOverride" style="width:220px" placeholder='{"hold_ms":30000}'></label>`;
-  html += `<button id="detailRunBtn">\u25B6 Run</button>`;
+  html += renderSelectField("override-entry_type", "entry_type", ["market", "limit"].map(v => ({ value: v, label: v })), execDefaults.entry_type);
+  html += renderSelectField("override-slippage_model", "slippage_model", ["half_spread", "full_spread", "fixed", "none"].map(v => ({ value: v, label: v })), execDefaults.slippage_model);
+  html += renderSelectField("override-position_mode", "position_mode", ["reject", "stack", "reverse"].map(v => ({ value: v, label: v })), execDefaults.position_mode);
+  html += `<div class="param-field">`;
+  html += `<label for="override-fixed_slippage_bps">fixed_slippage_bps</label>`;
+  html += `<input id="override-fixed_slippage_bps" data-override-key="fixed_slippage_bps" data-override-kind="float" value="${escapeHtml(String(execDefaults.fixed_slippage_bps))}">`;
+  html += `</div>`;
+  html += `</div>`;
+  html += `</div>`;
+  html += `</div>`;
+  html += `<div class="form-actions detail-run-actions">`;
+  html += `<button id="detailRunBtn" class="button-primary">\u25B6 Run Backtest</button>`;
+  html += `<span class="muted">This creates a new saved backtest entry. Existing runs stay intact.</span>`;
+  html += `</div>`;
+  if (backtestStatus.running) {
+    html += `<div class="banner" style="margin-top:8px">${backtestStatusText()}</div>`;
+  }
+  html += `<div id="detailRunProgress" class="na-progress" hidden>`;
+  html += `<div class="na-progress-bar"><div id="detailRunProgressFill" class="na-progress-fill"></div></div>`;
+  html += `<div id="detailRunProgressText" class="na-progress-text muted">Queued…</div>`;
+  html += `</div>`;
   html += `<span id="detailRunResult" class="muted"></span>`;
   html += `</div>`;
 
-  // Backtests list
   if (stratBts.length) {
     html += `<h3>Backtests (${stratBts.length})</h3>`;
-    html += `<div class="table-scroll"><table><thead><tr><th>id</th><th>trades</th><th>net</th><th>win</th><th>sharpe</th><th>MC</th><th></th></tr></thead><tbody>`;
+    html += `<div class="table-scroll strategy-results-table"><table><thead><tr><th>backtest</th><th>analysis</th><th>run setup</th><th>trades</th><th>net</th><th>avg</th><th>max DD</th><th>win</th><th>sharpe</th><th>PF</th><th>RF</th><th>MC</th><th></th></tr></thead><tbody>`;
     stratBts.forEach(b => {
+      const sessionInfo = describeSession(b.session_id);
+      const mergedParams = b.params || {};
+      const overrides = b.params_override || {};
       html += `<tr>`;
-      html += `<td><a href="backtest.html?id=${b.id}">${b.id}</a></td>`;
+      html += `<td><div class="bt-main-cell"><a href="backtest.html?id=${b.id}">${b.id}</a><div class="muted">${escapeHtml(backtestCreatedLabel(b))}</div></div></td>`;
+      html += `<td><div class="bt-main-cell"><a href="${sessionInfo.link || "#"}">${escapeHtml(sessionInfo.title)}</a><div class="muted">${escapeHtml(sessionInfo.detail)}</div></div></td>`;
+      html += `<td><div class="bt-param-stack"><div class="chip-row">${summarizeParams(mergedParams, { limit: 6 }) || '<span class="muted">No params</span>'}</div>${Object.keys(overrides).length ? `<div class="chip-row bt-override-row">${summarizeParams(overrides, { tone: "tone-blue", limit: 6 })}</div>` : `<div class="muted">No overrides</div>`}</div></td>`;
       html += `<td>${b.n_trades}</td>`;
       html += `<td class="${Number(b.total_net_pnl_bps || 0) >= 0 ? "ok" : "no"}">${signed(Number(b.total_net_pnl_bps || 0))}</td>`;
+      html += `<td>${signed(Number(b.avg_trade_bps || 0))}</td>`;
+      html += `<td class="${Number(b.max_drawdown_bps || 0) >= 0 ? "ok" : "no"}">${fmt(b.max_drawdown_bps)}</td>`;
       html += `<td>${pct(b.win_rate)}</td>`;
       html += `<td>${fmt(b.sharpe)}</td>`;
-      html += `<td>${b.has_montecarlo ? '<a href="montecarlo.html?backtest=' + b.id + '">open</a>' : '<a href="montecarlo.html?backtest=' + b.id + '">run</a>'}</td>`;
-      html += `<td><button onclick="deleteBacktest('${b.id}')" style="color:#f85149">Del</button></td>`;
+      html += `<td>${fmt(b.profit_factor)}</td>`;
+      html += `<td>${fmt(b.recovery_factor)}</td>`;
+      html += `<td><a class="button-link button-secondary button-compact" href="montecarlo.html?backtest=${b.id}">${b.has_montecarlo ? 'Open MC' : 'Run MC'}</a></td>`;
+      html += `<td><button class="button-danger" onclick="toggleDeleteBacktest('${b.id}')">Delete</button></td>`;
       html += `</tr>`;
+      html += `<tr id="deleteBacktestRow-${b.id}" hidden><td colspan="13">`;
+      html += `<div class="banner"><div>Delete backtest "${b.id}"? Monte Carlo results also removed.</div>`;
+      html += `<div class="action-group" style="margin-top:8px">`;
+      html += `<button class="button-danger" onclick="confirmDeleteBacktest('${b.id}')">Confirm Delete</button>`;
+      html += `<button class="button-secondary" onclick="toggleDeleteBacktest('${b.id}')">Cancel</button>`;
+      html += `</div></div>`;
+      html += `</td></tr>`;
     });
     html += `</tbody></table></div>`;
   }
 
   // Delete strategy
-  html += `<div id="dangerZone-${name}" style="margin-top:8px">`;
-  html += `<button onclick="toggleDeleteStrategy('${name}')" style="color:#f85149">Delete Strategy</button>`;
+  html += `<div id="dangerZone-${name}" class="danger-zone">`;
+  html += `<button class="button-danger" onclick="toggleDeleteStrategy('${name}')">Delete Strategy</button>`;
   html += `</div>`;
   html += `<div id="deleteConfirm-${name}" style="display:none" class="banner">`;
   const btCount = stratBts.length;
@@ -250,41 +591,97 @@ async function renderDetail(name) {
   if (mcCount) removes.push(`${mcCount} Monte Carlo`);
   if (removes.length) html += `<div class="muted">Removes: ${removes.join(" \u00b7 ")}</div>`;
   if (nbExists) {
-    html += `<div class="toolbar" style="margin-top:4px">`;
+    html += `<div class="action-group" style="margin-top:4px">`;
     html += `<label><input type="checkbox" id="delNotebook-${name}" checked> Also delete .ipynb</label>`;
     html += `</div>`;
   }
-  html += `<div class="toolbar" style="margin-top:4px">`;
-  html += `<button onclick="confirmDeleteStrategy('${name}')" style="color:#f85149">Confirm Delete</button>`;
-  html += `<button onclick="toggleDeleteStrategy('${name}')">Cancel</button>`;
+  html += `<div class="action-group" style="margin-top:4px">`;
+  html += `<button class="button-danger" onclick="confirmDeleteStrategy('${name}')">Confirm Delete</button>`;
+  html += `<button class="button-secondary" onclick="toggleDeleteStrategy('${name}')">Cancel</button>`;
   html += `</div></div>`;
 
   html += `</div>`;
   content.innerHTML = html;
+  document.getElementById("detailSession").onchange = () => { updateDetailSessionMeta(); };
+  await updateDetailSessionMeta();
+  if (backtestStatus.running) {
+    document.getElementById("detailRunBtn").disabled = true;
+    document.getElementById("detailRunResult").textContent = backtestStatusText();
+  } else if (activeBacktestJobId) {
+    document.getElementById("detailRunBtn").disabled = true;
+    document.getElementById("detailRunResult").textContent = `Job ${activeBacktestJobId} queued`;
+  }
 
   // wire run button
   document.getElementById("detailRunBtn").onclick = async () => {
+    const runBtn = document.getElementById("detailRunBtn");
+    if (backtestStatus.running) {
+      document.getElementById("detailRunResult").textContent = backtestStatusText();
+      return;
+    }
     const sessionId = document.getElementById("detailSession").value;
-    const raw = document.getElementById("detailOverride").value.trim();
     const body = { strategy_name: name, session_id: sessionId };
-    if (raw) { try { body.params_override = JSON.parse(raw); } catch { alert("bad JSON"); return; } }
-    document.getElementById("detailRunResult").textContent = "Running...";
+    const progressBox = document.getElementById("detailRunProgress");
+    const progressFill = document.getElementById("detailRunProgressFill");
+    const progressText = document.getElementById("detailRunProgressText");
+    showStrategyMessage("");
+    try {
+      const override = collectBacktestOverrides(strat);
+      if (Object.keys(override).length) body.params_override = override;
+    } catch (err) {
+      showStrategyMessage(err.message || String(err), "error");
+      return;
+    }
+    runBtn.disabled = true;
+    document.getElementById("detailRunResult").textContent = "";
+    progressBox.hidden = false;
+    progressFill.style.width = "2%";
+    progressText.textContent = "Queueing backtest…";
     try {
       const res = await postJSON("/api/backtests/run", body);
-      document.getElementById("detailRunResult").innerHTML = `<a href="backtest.html?id=${res.backtest_id}">${res.backtest_id}</a> \u2014 ${res.n_trades} trades`;
+      activeBacktestJobId = res.job_id;
+      progressFill.style.width = "4%";
+      progressText.textContent = `Queued: ${res.job_id}`;
+      const done = await waitForBacktestJob(res.job_id, {
+        intervalMs: 1000,
+        onUpdate: (job) => {
+          const fill = document.getElementById("detailRunProgressFill");
+          const text = document.getElementById("detailRunProgressText");
+          if (!fill || !text) return;
+          fill.style.width = `${backtestJobPct(job)}%`;
+          text.textContent = job.message || job.stage || "Running backtest…";
+        },
+      });
+      activeBacktestJobId = null;
+      progressFill.style.width = "100%";
+      progressText.textContent = "Backtest ready.";
+      document.getElementById("detailRunResult").innerHTML = `<a href="backtest.html?id=${done.backtest_id}">${done.backtest_id}</a> \u2014 ${done.n_trades} trades`;
       await loadAll();
       renderDetail(name);
+      if (typeof refreshSidebar === "function") refreshSidebar(true);
     } catch (err) {
+      activeBacktestJobId = null;
+      progressFill.style.width = "100%";
+      progressText.textContent = "Backtest failed";
       document.getElementById("detailRunResult").textContent = `Error: ${err.message}`;
+    } finally {
+      if (document.getElementById("detailRunBtn") === runBtn) runBtn.disabled = false;
     }
   };
 }
 
-async function deleteBacktest(btId) {
-  if (!confirm(`Delete backtest "${btId}"? Monte Carlo results also removed.`)) return;
+function toggleDeleteBacktest(btId) {
+  const row = document.getElementById(`deleteBacktestRow-${btId}`);
+  if (!row) return;
+  row.hidden = !row.hidden;
+}
+
+async function confirmDeleteBacktest(btId) {
   await apiFetch(`/api/backtests/${btId}`, { method: "DELETE" });
   await loadAll();
   if (selectedStratName) renderDetail(selectedStratName);
+  if (typeof refreshSidebar === "function") refreshSidebar(true);
+  showStrategyMessage(`Deleted backtest ${btId}.`, "banner");
 }
 
 function toggleDeleteStrategy(name) {
@@ -299,13 +696,21 @@ async function confirmDeleteStrategy(name) {
   selectedStratName = null;
   document.getElementById("detailPanel").hidden = true;
   await loadAll();
+  if (typeof refreshSidebar === "function") refreshSidebar(true);
 }
 
 async function compareSelected() {
   const names = [...document.querySelectorAll(".compareCheck:checked")].map(i => i.value).slice(0, 5);
-  if (names.length < 2) return alert("Select 2-5 strategies to compare");
+  if (names.length < 2) {
+    showStrategyMessage("Select 2-5 strategies to compare.", "error");
+    return;
+  }
   const rows = names.map(name => ({ name, bt: btSummary(name) })).filter(r => r.bt);
-  if (rows.length < 2) return alert("Selected strategies need saved backtests");
+  if (rows.length < 2) {
+    showStrategyMessage("Selected strategies need saved backtests.", "error");
+    return;
+  }
+  showStrategyMessage("");
   const compareSection = document.getElementById("compareSection");
   compareSection.hidden = false;
   compareSection.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -339,7 +744,17 @@ async function compareSelected() {
 document.getElementById("compareBtn").onclick = compareSelected;
 
 (async () => {
-  try { await loadAll(); } catch (err) { showError("#status", err); }
+  try {
+    await loadAll();
+    const urlStrategy = qs("strategy");
+    if (urlStrategy && allStrategies.some(s => s.name === urlStrategy)) {
+      selectStrategy(urlStrategy);
+      if (qs("confirm_delete") === "1") {
+        toggleDeleteStrategy(urlStrategy);
+      }
+    }
+    backtestStatusPoll = window.setInterval(refreshBacktestStatus, 3000);
+  } catch (err) { showError("#status", err); }
 })();
 </script>
 </body>

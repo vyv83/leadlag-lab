@@ -7,20 +7,6 @@
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>leadlag</h1>
-<nav>
-  <a href="dashboard.html">Dashboard</a>
-  <a href="collector.html">Collector</a>
-  <a href="recordings.html">Recordings</a>
-  <a href="explorer.html">Explorer</a>
-  <a href="quality.html">Quality</a>
-  <a href="strategy.html">Strategies</a>
-  <a href="backtest.html">Backtests</a>
-  <a href="montecarlo.html">Monte Carlo</a>
-  <a href="paper.html" class="active">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
-</nav>
-</header>
 <main>
 <section>
   <div class="toolbar">
@@ -80,6 +66,7 @@
 </section>
 </main>
 <script src="app.js"></script>
+<script src="sidebar.js"></script>
 <script>
 async function loadStrategies() {
   const strategies = await fetchJSON("/api/strategies");
@@ -88,6 +75,16 @@ async function loadStrategies() {
   sel.innerHTML = valid.map(s => `<option value="${s.name}">${s.name}</option>`).join("");
   const urlStrategy = qs("strategy");
   if (urlStrategy && valid.some(s => s.name === urlStrategy)) sel.value = urlStrategy;
+}
+
+function renderPageTitle(status) {
+  if (!window.insertPageTitle) return;
+  const stratName = status.strategy || qs("strategy") || "";
+  if (!stratName) return;
+  const isRunning = status.running || status.proc_alive;
+  const dot = isRunning ? '<span class="sb-live" style="display:inline-block;margin-right:3px"></span>' : "";
+  const statusStr = isRunning ? "running" : "stopped";
+  window.insertPageTitle(`Paper · ${stratName}`, `${dot}${statusStr}`, "");
 }
 
 async function refresh() {
@@ -104,6 +101,7 @@ async function refresh() {
   ]);
   const staleBanner = document.getElementById("stalePaperBanner");
   staleBanner.hidden = !(status.running && collectorStatus.stale);
+  renderPageTitle(status);
   renderStatus(status);
   renderVenues(venues);
   renderEquity(equity);

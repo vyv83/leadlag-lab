@@ -7,21 +7,13 @@
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-<header><h1>leadlag</h1>
-<nav>
-  <a href="dashboard.html" class="active">Dashboard</a>
-  <a href="collector.html">Collector</a>
-  <a href="recordings.html">Recordings</a>
-  <a href="explorer.html">Explorer</a>
-  <a href="quality.html">Quality</a>
-  <a href="strategy.html">Strategies</a>
-  <a href="backtest.html">Backtests</a>
-  <a href="montecarlo.html">Monte Carlo</a>
-  <a href="paper.html">Paper</a>
-  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
-</nav>
-</header>
 <main>
+
+<div id="startHereBanner" class="banner" hidden>
+  No data yet. <strong>Start here:</strong>
+  <a href="collector.html" class="button-link" style="margin-left:6px">Collect Data →</a>
+  <span class="muted" style="margin-left:8px">Run the collector for at least 30 minutes to get your first recording.</span>
+</div>
 
 <!-- Group 1: System Health -->
 <div class="section-group">
@@ -72,9 +64,9 @@
     <dialog id="collectorDialog">
       <h2>Start Collection</h2>
       <div class="toolbar">
-        <label>Duration h <input id="dashDurationHours" type="number" min="0.1" step="0.1" value="1" style="width:48px"></label>
-        <label>Bin ms <input id="dashBinSize" type="number" min="10" step="10" value="50" style="width:48px"></label>
-        <label>Rotation m <input id="dashRotation" type="number" min="1" step="1" value="30" style="width:40px"></label>
+        <label>Duration h <input id="dashDurationHours" class="compact-number" type="number" min="0.1" step="0.1" value="1"></label>
+        <label>Bin ms <input id="dashBinSize" class="compact-number" type="number" min="10" step="10" value="50"></label>
+        <label>Rotation m <input id="dashRotation" class="compact-number" type="number" min="1" step="1" value="30"></label>
       </div>
       <div class="toolbar">
         <button id="dashSelectLeaders">Leaders</button>
@@ -131,6 +123,7 @@
 
 </main>
 <script src="app.js"></script>
+<script src="sidebar.js"></script>
 <script>
 let latestCollections = [];
 let dashboardVenues = [];
@@ -180,6 +173,7 @@ function renderTop(sys, collector, paper, collections, sessions, backtests, stra
   open.href = latest ? `explorer.html?session=${latest.id}` : "explorer.html";
   open.classList.toggle("disabled", !latest);
   document.getElementById("runAnalysisLatest").disabled = !collections.length;
+  document.getElementById("startHereBanner").hidden = !!(collections.length || sessions.length || strategies.length);
 }
 
 function renderSystem(sys, hist) {
