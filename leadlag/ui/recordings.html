@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>leadlag - recordings</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>leadlag</h1>
+<nav>
+  <a href="dashboard.html">Dashboard</a>
+  <a href="collector.html">Collector</a>
+  <a href="recordings.html" class="active">Recordings</a>
+  <a href="explorer.html">Explorer</a>
+  <a href="quality.html">Quality</a>
+  <a href="strategy.html">Strategies</a>
+  <a href="backtest.html">Backtests</a>
+  <a href="montecarlo.html">Monte Carlo</a>
+  <a href="paper.html">Paper</a>
+  <a href="/leadlag-lab/lab/" target="_blank" class="nav-jupyter">Jupyter ↗</a>
+</nav>
+</header>
+<main>
+
+<section>
+  <h2>Recordings</h2>
+  <div id="status" class="muted">Loading...</div>
+  <div class="banner" id="mergeHint" hidden>
+    Recordings separated by less than 45 minutes are merged automatically.
+  </div>
+  <div id="recordingsList"></div>
+</section>
+
+</main>
+<script src="app.js"></script>
+<script>
+let recordings = [];
+let sessions = [];
+const analysisPollers = new Map();
+
+async function loadAll() {
+  const [rawRecordings, rawSessions] = await Promise.all([
+    fetchJSON("/api/collections"),
+    fetchJSON("/api/sessions"),
+  ]);
+  recordings = rawRecordings;
+  sessions = rawSessions;
+  document.getElementById("status").textContent = "";
+  document.getElementById("mergeHint").hidden = !recordings.length;
+  renderRecordings();
+}
+
+function analysesForRecording(recId) {
+  return sessions.filter(s => {
+    const prefix = recId.split("_").slice(0, 3).join("_");
+    return s.id.startsWith(prefix) || (s.collection_id && s.collection_id === recId);
+  });
+}
+
+function renderRecordings() {
+  const box = document.getElementById("recordingsList");
+  box.innerHTML = "";
+  if (!recordings.length) {
+    box.innerHTML = '<div class="muted">No recordings yet. Start the Collector first.</div>';
+    return;
+  }
+  recordings.forEach((rec, idx) => {
+    const analyses = analysesForRecording(rec.id);
+    const div = el("div", { class: "section-group", id: `rec-${idx}` });
+
+    // header row
+    const header = el("div", { class: "toolbar" });
+    header.innerHTML = `
+      <strong>${rec.id}</strong>
+      <span class="muted">${utc(rec.t_start_ms)} → ${utc(rec.t_end_ms)}</span>
+      <span class="muted">${rec.t_start_ms && rec.t_end_ms ? seconds(Math.round((Number(rec.t_end_ms) - Number(rec.t_start_ms)) / 1000)) : "\u2014"}</span>
+      <span class="muted">${rec.n_venues || 0} venues</span>
+      <span class="muted">${rec.n_ticks || 0} ticks</span>
+      <span class="muted">${analyses.length} analyses</span>
+    `;
+    div.appendChild(header);
+
+    // analyses table
+    if (analyses.length) {
+      const table = el("table", {});
+      table.innerHTML = `<thead><tr><th>analysis</th><th>date</th><th>events</th><th>A/B/C</th><th>venues</th><th>actions</th></tr></thead><tbody></tbody>`;
+      analyses.forEach(a => {
+        const tr = el("tr");
+        const tdActions = el("td");
+        tdActions.style.whiteSpace = "nowrap";
+        tdActions.innerHTML = `
+          <a href="quality.html?session=${a.id}" class="button-link">Quality</a>
+          <a href="explorer.html?session=${a.id}" class="button-link" style="margin-left:4px">Explore</a>
+        `;
+        tr.innerHTML = `<td>${a.id}</td><td>${a.date || "—"}</td><td>${a.n_events || 0}</td><td>${a.n_signal_a || 0}/${a.n_signal_b || 0}/${a.n_signal_c || 0}</td><td>${a.n_venues || 0}</td>`;
+        tr.appendChild(tdActions);
+        table.querySelector("tbody").appendChild(tr);
+      });
+      div.appendChild(table);
+    }
+
+    // actions
+    const actions = el("div", { class: "toolbar", style: "margin-top:6px" });
+    const newBtn = el("button", { onclick: () => toggleNewAnalysis(idx) }, ["+ New Analysis"]);
+    actions.appendChild(newBtn);
+    div.appendChild(actions);
+
+    // new analysis inline form (hidden)
+    const form = el("div", { class: "new-analysis-form", id: `newAnalysis-${idx}`, style: "display:none; margin-top:6px" });
+    form.innerHTML = `
+      <div class="na-fields">
+        <div class="na-field">
+          <label for="na-threshold-${idx}">threshold_sigma</label>
+          <input id="na-threshold-${idx}" type="number" step="0.1" value="2.0" class="na-threshold">
+        </div>
+        <div class="na-field">
+          <label for="na-binsize-${idx}">bin_size_ms</label>
+          <input id="na-binsize-${idx}" type="number" step="10" value="50" class="na-binsize">
+        </div>
+        <div class="na-field">
+          <label for="na-confirm-${idx}">confirm_window_bins</label>
+          <input id="na-confirm-${idx}" type="number" step="1" value="10" class="na-confirm">
+        </div>
+        <div class="na-field">
+          <label for="na-ema-${idx}">ema_span_bins</label>
+          <input id="na-ema-${idx}" type="number" step="10" value="200" class="na-ema">
+        </div>
+      </div>
+      <div class="na-actions">
+        <div class="toolbar">
+          <button class="na-run">Run Analysis</button>
+          <button class="na-cancel" onclick="this.closest('.new-analysis-form').style.display='none'">Cancel</button>
+          <span class="na-result muted"></span>
+        </div>
+        <div class="na-progress" hidden>
+          <div class="na-progress-bar"><div class="na-progress-fill"></div></div>
+          <div class="na-progress-text muted">Queued…</div>
+        </div>
+      </div>
+    `;
+    form.querySelector(".na-run").onclick = async () => {
+      const params = {
+        threshold_sigma: Number(form.querySelector(".na-threshold").value || 2.0),
+        bin_size_ms: Number(form.querySelector(".na-binsize").value || 50),
+        confirm_window_bins: Number(form.querySelector(".na-confirm").value || 10),
+        ema_span_bins: Number(form.querySelector(".na-ema").value || 200),
+      };
+      const runBtn = form.querySelector(".na-run");
+      const cancelBtn = form.querySelector(".na-cancel");
+      const resultNode = form.querySelector(".na-result");
+      const progressBox = form.querySelector(".na-progress");
+      const progressFill = form.querySelector(".na-progress-fill");
+      const progressText = form.querySelector(".na-progress-text");
+      runBtn.disabled = true;
+      cancelBtn.disabled = true;
+      resultNode.textContent = "";
+      progressBox.hidden = false;
+      progressFill.style.width = "2%";
+      progressText.textContent = "Queueing analysis…";
+      try {
+        const res = await postJSON(`/api/collections/${rec.id}/analyze`, { params });
+        if (res.will_overwrite) {
+          resultNode.textContent = `Updating existing analysis ${res.session_id}…`;
+        }
+        await pollAnalysisJob({
+          jobId: res.job_id,
+          sessionId: res.session_id,
+          resultNode,
+          progressFill,
+          progressText,
+          onComplete: async (job) => {
+            resultNode.innerHTML = `<a href="quality.html?session=${job.session_id}">${job.session_id}</a> — ${job.n_events || 0} events`;
+            progressText.textContent = "Analysis ready. Opening quality page…";
+            progressFill.style.width = "100%";
+            await loadAll();
+            window.location.href = `quality.html?session=${encodeURIComponent(job.session_id)}`;
+          },
+        });
+      } catch (err) {
+        resultNode.textContent = `Error: ${err.message}`;
+        progressText.textContent = "Analysis failed";
+        progressFill.style.width = "100%";
+      } finally {
+        runBtn.disabled = false;
+        cancelBtn.disabled = false;
+      }
+    };
+    div.appendChild(form);
+    box.appendChild(div);
+  });
+}
+
+function toggleNewAnalysis(idx) {
+  const form = document.getElementById(`newAnalysis-${idx}`);
+  form.style.display = form.style.display === "none" ? "" : "none";
+}
+
+async function pollAnalysisJob({ jobId, sessionId, resultNode, progressFill, progressText, onComplete }) {
+  if (analysisPollers.has(jobId)) return analysisPollers.get(jobId);
+  const task = new Promise((resolve, reject) => {
+    let attempts = 0;
+    const tick = async () => {
+      attempts += 1;
+      try {
+        const job = await fetchJSON(`/api/analysis-jobs/${jobId}`);
+        const pct = Math.max(2, Math.min(100, Math.round((Number(job.progress) || 0) * 100)));
+        progressFill.style.width = `${pct}%`;
+        progressText.textContent = job.message || job.stage || "Running analysis…";
+        if (job.status === "completed") {
+          analysisPollers.delete(jobId);
+          if (onComplete) await onComplete(job);
+          resolve(job);
+          return;
+        }
+        if (job.status === "failed") {
+          analysisPollers.delete(jobId);
+          reject(new Error(job.error?.message || job.message || "Analysis failed"));
+          return;
+        }
+        if (attempts > 600) {
+          analysisPollers.delete(jobId);
+          reject(new Error("Analysis polling timeout"));
+          return;
+        }
+        setTimeout(tick, 1000);
+      } catch (err) {
+        analysisPollers.delete(jobId);
+        resultNode.textContent = `Error: ${err.message}`;
+        reject(err);
+      }
+    };
+    tick();
+  });
+  analysisPollers.set(jobId, task);
+  return task;
+}
+
+(async () => {
+  try { await loadAll(); } catch (err) { showError("#status", err); }
+})();
+</script>
+</body>
+</html>

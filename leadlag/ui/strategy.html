@@ -11,6 +11,7 @@
 <nav>
   <a href="dashboard.html">Dashboard</a>
   <a href="collector.html">Collector</a>
+  <a href="recordings.html">Recordings</a>
   <a href="explorer.html">Explorer</a>
   <a href="quality.html">Quality</a>
   <a href="strategy.html" class="active">Strategies</a>
@@ -45,58 +46,19 @@
   </tr></thead><tbody></tbody></table>
 </section>
 
-<section>
-  <h2>Run Backtest</h2>
-  <div class="filters">
-    <label>Strategy <select id="strategy"></select></label>
-    <label>Session <select id="session"></select></label>
-    <label>Override <input id="override" style="width:280px" placeholder='{"hold_ms":30000}'></label>
-    <button id="run">Run Backtest</button>
-  </div>
-  <div id="runResult"></div>
+<!-- Inline detail panel -->
+<section id="detailPanel" hidden>
+  <div id="detailContent"></div>
 </section>
 
-<section>
-  <h2>Create Simple Strategy</h2>
-  <div class="decision-strip" style="margin-bottom:8px">
-    <span class="hint">For prototype only.</span>
-    <span class="hint">Real strategies belong in Jupyter:</span>
-    <a href="/leadlag-lab/lab/" target="_blank">Open Notebook ↗</a>
-  </div>
-  <div class="breakdown-grid">
-    <div>
-      <div class="kv">
-        <div class="k">Name</div><div><input id="sName" placeholder="my_strategy" style="width:100%"></div>
-        <div class="k">Signal</div><div>
-          <label><input type="checkbox" class="sSignal" value="A" checked> A</label>
-          <label><input type="checkbox" class="sSignal" value="B"> B</label>
-          <label><input type="checkbox" class="sSignal" value="C" checked> C</label>
-        </div>
-        <div class="k">Follower</div><div><select id="sFollower"></select></div>
-        <div class="k">Min σ</div><div><input id="sMinSigma" type="number" step="0.1" value="2.0"></div>
-        <div class="k">Hold ms</div><div><input id="sHold" type="number" value="30000"></div>
-      </div>
-    </div>
-    <div>
-      <div class="kv">
-        <div class="k">Entry type</div><div><select id="sEntry"><option>market</option><option>limit</option></select></div>
-        <div class="k">Slippage</div><div><select id="sSlippage"><option value="half_spread">half_spread</option><option value="none">none</option><option value="fixed">fixed</option><option value="full_spread">full_spread</option></select></div>
-        <div class="k">Max spread</div><div><input id="sMaxSpread" type="number" step="0.1" value="2.0"></div>
-        <div class="k">Position</div><div><select id="sPosition"><option>reject</option><option>stack</option><option>reverse</option></select></div>
-        <div class="k">Qty BTC</div><div><input id="sQty" type="number" step="0.001" value="0.001"></div>
-      </div>
-    </div>
-  </div>
-  <div class="toolbar" style="margin-top:6px">
-    <button id="createBtn">Save Strategy</button>
-    <span id="createResult" class="muted"></span>
-  </div>
-</section>
 </main>
 <script src="app.js"></script>
 <script>
 let sessions = [];
 let backtests = [];
+let allStrategies = [];
+let selectedStratName = null;
+let notebooks = [];
 
 function btSummary(stratName) {
   const candidates = backtests.filter(b => b.strategy === stratName);
@@ -105,62 +67,69 @@ function btSummary(stratName) {
   return candidates[candidates.length - 1];
 }
 
+function btForStrat(name) {
+  return backtests.filter(b => b.strategy === name);
+}
+
 async function loadAll() {
-  const [strats, sess, bts] = await Promise.all([
+  const [strats, sess, bts, nb] = await Promise.all([
     fetchJSON("/api/strategies"),
     fetchJSON("/api/sessions"),
     fetchJSON("/api/backtests"),
+    fetchJSON("/api/notebooks").catch(() => []),
   ]);
   sessions = sess;
   backtests = bts;
+  allStrategies = strats;
+  notebooks = nb;
   document.getElementById("status").textContent = "";
   renderTable(strats);
-  fillSelectors(strats, sess);
+}
+
+function hasNotebook(name) {
+  return notebooks.some(n => n.name === name || n === name);
 }
 
 function renderTable(strats) {
   const tbody = document.querySelector("#strategies tbody");
   tbody.innerHTML = "";
   strats.forEach(s => {
-    const tr = el("tr");
+    const tr = el("tr", { style: "cursor:pointer", onclick: () => selectStrategy(s.name) });
     const bt = btSummary(s.name);
     const p = s.params || {};
     const latest = s.last_backtest_summary || bt;
     const signals = s.signal_type?.length ? s.signal_type : (p.signal ? [p.signal] : (p.signals || []));
     const venues = s.venues?.length ? s.venues : (p.follower ? [p.follower] : p.venue ? [p.venue] : []);
-    const venue = venues.length > 3 ? `${venues.slice(0, 3).join(", ")} +${venues.length - 3}` : (venues.join(", ") || "—");
+    const venue = venues.length > 3 ? `${venues.slice(0, 3).join(", ")} +${venues.length - 3}` : (venues.join(", ") || "\u2014");
 
-    // □ checkbox
     const td0 = el("td");
     td0.innerHTML = `<input type="checkbox" class="compareCheck" value="${s.name}">`;
+    td0.onclick = e => e.stopPropagation();
 
-    // name
     const td1 = el("td");
     td1.textContent = s.name;
     td1.style.fontWeight = "600";
+    if (!hasNotebook(s.name)) {
+      const badge = el("span", { class: "ping-warn", title: "No notebook file found" }, [" [nb\u26A0]"]);
+      td1.appendChild(badge);
+    }
 
-    // valid
     const td3 = el("td");
-    td3.innerHTML = s.valid ? '<span class="ok">✓</span>' : `<span class="no" title="${s.error || ''}">✗</span>`;
+    td3.innerHTML = s.valid ? '<span class="ok">\u2713</span>' : `<span class="no" title="${s.error || ''}">\u2717</span>`;
 
-    // last net
     const tdLastNet = el("td");
-    tdLastNet.textContent = latest ? signed(Number(latest.total_net_pnl_bps || 0)) : "—";
+    tdLastNet.textContent = latest ? signed(Number(latest.total_net_pnl_bps || 0)) : "\u2014";
     tdLastNet.className = latest && Number(latest.total_net_pnl_bps || 0) >= 0 ? "ok" : latest ? "no" : "muted";
 
-    // trades
     const tdTrades = el("td");
-    tdTrades.textContent = latest ? latest.n_trades : "—";
+    tdTrades.textContent = latest ? latest.n_trades : "\u2014";
 
-    // win
     const tdWin = el("td");
-    tdWin.textContent = latest ? pct(latest.win_rate) : "—";
+    tdWin.textContent = latest ? pct(latest.win_rate) : "\u2014";
 
-    // sharpe
     const tdSharpe = el("td");
-    tdSharpe.textContent = latest ? fmt(latest.sharpe) : "—";
+    tdSharpe.textContent = latest ? fmt(latest.sharpe) : "\u2014";
 
-    // status BT/P
     const tdStatus = el("td");
     tdStatus.style.whiteSpace = "nowrap";
     tdStatus.innerHTML = [
@@ -168,38 +137,168 @@ function renderTable(strats) {
       s.has_paper ? '<span class="ok" title="Paper run">P</span>' : '<span class="na" title="No paper">P</span>',
     ].join(" ");
 
-    // actions
     const td10 = el("td");
     td10.style.whiteSpace = "nowrap";
-    const runBtn = el("button", { onclick: () => quickBacktest(s.name) }, ["Run"]);
+    const runBtn = el("button", { onclick: (e) => { e.stopPropagation(); selectStrategy(s.name); } }, ["Detail"]);
     td10.appendChild(runBtn);
     if (latest) {
-      td10.appendChild(el("a", { href: `backtest.html?id=${latest.id}`, class: "button-link", style: "margin-left:4px" }, ["Backtest"]));
-      td10.appendChild(el("a", { href: `paper.html?strategy=${encodeURIComponent(s.name)}`, class: "button-link", style: "margin-left:4px" }, ["Paper"]));
+      td10.appendChild(el("a", { href: `backtest.html?id=${latest.id}`, class: "button-link", style: "margin-left:4px" }, ["View"]));
     }
-    const delBtn = el("button", { onclick: () => deleteStrat(s.name), style: "margin-left:4px;color:#f85149" }, ["Del"]);
-    td10.appendChild(delBtn);
 
-    // secondary cols (scrollable)
-    const td2 = el("td", { className: "muted" }); td2.textContent = s.version || "—";
-    const td6 = el("td"); td6.innerHTML = signals.map(sigBadge).join(" ") || "—";
+    const td2 = el("td", { className: "muted" }); td2.textContent = s.version || "\u2014";
+    const td6 = el("td"); td6.innerHTML = signals.map(sigBadge).join(" ") || "\u2014";
     const td5 = el("td"); td5.textContent = venue;
     const td7 = el("td"); td7.textContent = s.entry_type || p.entry_type || "market";
-    const td8 = el("td", { className: "muted" }); td8.textContent = s.slippage_model || p.slippage_model || "—";
-    const td9 = el("td", { className: "muted" }); td9.textContent = s.position_mode || p.position_mode || "reject";
-    const td4 = el("td"); td4.textContent = (s.description || "—").slice(0, 50);
+    const td8 = el("td", { className: "muted" }); td8.textContent = s.slippage_model || p.slippage_model || "\u2014";
+    const td9 = el("td", { className: "muted" }); td9.textContent = s.position_mode || p.position_mode || "\u2014";
+    const td4 = el("td"); td4.textContent = (s.description || "\u2014").slice(0, 50);
 
     for (const td of [td0, td1, td3, tdLastNet, tdTrades, tdWin, tdSharpe, tdStatus, td10, td2, td6, td5, td7, td8, td9, td4]) {
       tr.appendChild(td);
     }
 
-    // last backtest row highlight
-    if (latest) {
-      tr.title = `Last: ${signed(Number(latest.total_net_pnl_bps || 0))} bps, ${latest.n_trades} trades, win ${pct(latest.win_rate)}`;
-    }
-
+    if (selectedStratName === s.name) tr.classList.add("selected");
     tbody.appendChild(tr);
   });
+}
+
+function selectStrategy(name) {
+  selectedStratName = name;
+  renderTable(allStrategies);
+  renderDetail(name);
+}
+
+async function renderDetail(name) {
+  const panel = document.getElementById("detailPanel");
+  const content = document.getElementById("detailContent");
+  panel.hidden = false;
+  const strat = allStrategies.find(s => s.name === name);
+  if (!strat) { panel.hidden = true; return; }
+  const bt = btSummary(name);
+  const stratBts = btForStrat(name);
+  const nbExists = hasNotebook(name);
+  const p = strat.params || {};
+
+  let html = `<div class="section-group">`;
+  html += `<div class="toolbar"><strong style="font-size:13px">${name}</strong>`;
+  if (strat.version) html += `<span class="muted">\u00b7 v${strat.version}</span>`;
+  html += `</div>`;
+
+  // Notebook row
+  html += `<div class="toolbar" style="margin-bottom:6px">`;
+  if (nbExists) {
+    html += `<span class="ok">\u2713 ${name}.ipynb</span>`;
+    html += `<a href="/leadlag-lab/lab/tree/notebooks/${name}.ipynb" target="_blank" class="button-link">Open \u2197</a>`;
+  } else {
+    html += `<span class="ping-warn">No notebook \u2014 create in Jupyter</span>`;
+    html += `<a href="/leadlag-lab/lab/tree/notebooks/strategy_dev.ipynb" target="_blank" class="button-link">Open template \u2197</a>`;
+  }
+  html += `</div>`;
+
+  // Params
+  if (Object.keys(p).length) {
+    html += `<h3>Params</h3><div class="kv compact">`;
+    for (const [k, v] of Object.entries(p)) {
+      const display = typeof v === "object" ? JSON.stringify(v) : String(v);
+      html += `<div class="k">${k}</div><div>${display}</div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Run Backtest inline
+  html += `<h3 style="margin-top:8px">Run Backtest</h3>`;
+  html += `<div class="toolbar" style="flex-wrap:wrap">`;
+  html += `<label>Analysis <select id="detailSession">`;
+  sessions.forEach(s => {
+    const recommended = (s.n_events || 0) > 50 ? " \u2190 recommended" : "";
+    html += `<option value="${s.id}">${s.id} \u00b7 ${s.n_events || 0} events${recommended}</option>`;
+  });
+  html += `</select></label>`;
+  html += `<label>Override <input id="detailOverride" style="width:220px" placeholder='{"hold_ms":30000}'></label>`;
+  html += `<button id="detailRunBtn">\u25B6 Run</button>`;
+  html += `<span id="detailRunResult" class="muted"></span>`;
+  html += `</div>`;
+
+  // Backtests list
+  if (stratBts.length) {
+    html += `<h3>Backtests (${stratBts.length})</h3>`;
+    html += `<div class="table-scroll"><table><thead><tr><th>id</th><th>trades</th><th>net</th><th>win</th><th>sharpe</th><th>MC</th><th></th></tr></thead><tbody>`;
+    stratBts.forEach(b => {
+      html += `<tr>`;
+      html += `<td><a href="backtest.html?id=${b.id}">${b.id}</a></td>`;
+      html += `<td>${b.n_trades}</td>`;
+      html += `<td class="${Number(b.total_net_pnl_bps || 0) >= 0 ? "ok" : "no"}">${signed(Number(b.total_net_pnl_bps || 0))}</td>`;
+      html += `<td>${pct(b.win_rate)}</td>`;
+      html += `<td>${fmt(b.sharpe)}</td>`;
+      html += `<td>${b.has_montecarlo ? '<a href="montecarlo.html?backtest=' + b.id + '">open</a>' : '<a href="montecarlo.html?backtest=' + b.id + '">run</a>'}</td>`;
+      html += `<td><button onclick="deleteBacktest('${b.id}')" style="color:#f85149">Del</button></td>`;
+      html += `</tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+
+  // Delete strategy
+  html += `<div id="dangerZone-${name}" style="margin-top:8px">`;
+  html += `<button onclick="toggleDeleteStrategy('${name}')" style="color:#f85149">Delete Strategy</button>`;
+  html += `</div>`;
+  html += `<div id="deleteConfirm-${name}" style="display:none" class="banner">`;
+  const btCount = stratBts.length;
+  const mcCount = stratBts.filter(b => b.has_montecarlo).length;
+  html += `<div>\u26A0 Delete "${name}"?</div>`;
+  let removes = [];
+  if (btCount) removes.push(`${btCount} backtest${btCount > 1 ? "s" : ""}`);
+  if (mcCount) removes.push(`${mcCount} Monte Carlo`);
+  if (removes.length) html += `<div class="muted">Removes: ${removes.join(" \u00b7 ")}</div>`;
+  if (nbExists) {
+    html += `<div class="toolbar" style="margin-top:4px">`;
+    html += `<label><input type="checkbox" id="delNotebook-${name}" checked> Also delete .ipynb</label>`;
+    html += `</div>`;
+  }
+  html += `<div class="toolbar" style="margin-top:4px">`;
+  html += `<button onclick="confirmDeleteStrategy('${name}')" style="color:#f85149">Confirm Delete</button>`;
+  html += `<button onclick="toggleDeleteStrategy('${name}')">Cancel</button>`;
+  html += `</div></div>`;
+
+  html += `</div>`;
+  content.innerHTML = html;
+
+  // wire run button
+  document.getElementById("detailRunBtn").onclick = async () => {
+    const sessionId = document.getElementById("detailSession").value;
+    const raw = document.getElementById("detailOverride").value.trim();
+    const body = { strategy_name: name, session_id: sessionId };
+    if (raw) { try { body.params_override = JSON.parse(raw); } catch { alert("bad JSON"); return; } }
+    document.getElementById("detailRunResult").textContent = "Running...";
+    try {
+      const res = await postJSON("/api/backtests/run", body);
+      document.getElementById("detailRunResult").innerHTML = `<a href="backtest.html?id=${res.backtest_id}">${res.backtest_id}</a> \u2014 ${res.n_trades} trades`;
+      await loadAll();
+      renderDetail(name);
+    } catch (err) {
+      document.getElementById("detailRunResult").textContent = `Error: ${err.message}`;
+    }
+  };
+}
+
+async function deleteBacktest(btId) {
+  if (!confirm(`Delete backtest "${btId}"? Monte Carlo results also removed.`)) return;
+  await apiFetch(`/api/backtests/${btId}`, { method: "DELETE" });
+  await loadAll();
+  if (selectedStratName) renderDetail(selectedStratName);
+}
+
+function toggleDeleteStrategy(name) {
+  const confirm = document.getElementById(`deleteConfirm-${name}`);
+  confirm.style.display = confirm.style.display === "none" ? "" : "none";
+}
+
+async function confirmDeleteStrategy(name) {
+  const nbCheck = document.getElementById(`delNotebook-${name}`);
+  const includeNb = nbCheck ? nbCheck.checked : false;
+  await apiFetch(`/api/strategies/${name}?include_notebook=${includeNb}`, { method: "DELETE" });
+  selectedStratName = null;
+  document.getElementById("detailPanel").hidden = true;
+  await loadAll();
 }
 
 async function compareSelected() {
@@ -236,132 +335,6 @@ async function compareSelected() {
     yaxis: { title: "net cumulative bps" },
   }, PLOT_CFG);
 }
-
-function fillSelectors(strats, sess) {
-  const valid = strats.filter(s => s.valid);
-  document.getElementById("strategy").innerHTML = valid.map(s => `<option value="${s.name}">${s.name}</option>`).join("");
-  document.getElementById("session").innerHTML = sess.map(s => `<option value="${s.id}">${s.id}</option>`).join("");
-
-  // follower select for creator — collect from strategies + add URL param if present
-  const urlFollower = qs("follower");
-  const followers = new Set();
-  strats.forEach(s => {
-    const p = s.params || {};
-    (p.followers || []).forEach(f => followers.add(f));
-    if (p.follower) followers.add(p.follower);
-  });
-  if (urlFollower) followers.add(urlFollower);
-  const fs = document.getElementById("sFollower");
-  fs.innerHTML = (followers.size ? [...followers] : ["Lighter Perp"]).map(v => `<option>${v}</option>`).join("");
-  if (urlFollower && followers.has(urlFollower)) fs.value = urlFollower;
-
-  // pre-select session from URL
-  const urlSession = qs("session");
-  if (urlSession && sess.some(s => s.id === urlSession)) {
-    document.getElementById("session").value = urlSession;
-  }
-}
-
-function safeClassName(name) {
-  const cleaned = name.replace(/[^a-zA-Z0-9_]/g, "_");
-  const prefixed = /^[A-Za-z_]/.test(cleaned) ? cleaned : `Strategy_${cleaned}`;
-  return prefixed.split("_").filter(Boolean).map(part => part.charAt(0).toUpperCase() + part.slice(1)).join("");
-}
-
-async function quickBacktest(name) {
-  const sessionId = document.getElementById("session").value || sessions[0]?.id;
-  if (!sessionId) return alert("No sessions available");
-  const res = await postJSON("/api/backtests/run", { strategy_name: name, session_id: sessionId });
-  location.href = `backtest.html?id=${res.backtest_id}`;
-}
-
-async function deleteStrat(name) {
-  if (!confirm(`Delete strategy "${name}"?`)) return;
-  await apiFetch(`/api/strategies/${name}`, { method: "DELETE" });
-  loadAll();
-}
-
-document.getElementById("run").onclick = async () => {
-  const body = {
-    strategy_name: document.getElementById("strategy").value,
-    session_id: document.getElementById("session").value,
-  };
-  const raw = document.getElementById("override").value.trim();
-  if (raw) { try { body.params_override = JSON.parse(raw); } catch { alert("bad JSON"); return; } }
-  const res = await apiFetch("/api/backtests/run", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const out = await res.json();
-  document.getElementById("runResult").innerHTML =
-    res.ok ? `<a href="backtest.html?id=${out.backtest_id}">${out.backtest_id}</a> — ${out.n_trades} trades`
-           : `<div class="error">${JSON.stringify(out, null, 2)}</div>`;
-};
-
-document.getElementById("createBtn").onclick = async () => {
-  const name = document.getElementById("sName").value.trim();
-  if (!name) return alert("Enter a name");
-  const signals = [...document.querySelectorAll(".sSignal:checked")].map(c => c.value);
-  const follower = document.getElementById("sFollower").value;
-  const minSigma = document.getElementById("sMinSigma").value;
-  const holdMs = document.getElementById("sHold").value;
-  const entryType = document.getElementById("sEntry").value;
-  const slippageModel = document.getElementById("sSlippage").value;
-  const maxSpread = document.getElementById("sMaxSpread").value;
-  const positionMode = document.getElementById("sPosition").value;
-  const qtyBtc = document.getElementById("sQty").value;
-
-  const signalCheck = signals.length === 1 ? `event.signal != '${signals[0]}'` : `event.signal not in ${JSON.stringify(signals)}`;
-  const signalCheckCode = signals.length === 1
-    ? `if event.signal != '${signals[0]}': return None`
-    : `if event.signal not in ${JSON.stringify(signals)}: return None`;
-  const className = safeClassName(name);
-
-  const code = `from leadlag import Strategy, Order
-
-class ${className}(Strategy):
-    name = "${name}"
-    version = "${new Date().toISOString().slice(0, 10)}"
-    description = "Simple strategy: ${signals.join('+')} on ${follower}"
-    params = {
-        "signals": ${JSON.stringify(signals)},
-        "follower": "${follower}",
-        "min_magnitude": ${Number(minSigma)},
-        "hold_ms": ${Number(holdMs)},
-        "entry_type": "${entryType}",
-        "slippage_model": "${slippageModel}",
-        "max_bbo_spread_bps": ${Number(maxSpread)},
-        "position_mode": "${positionMode}",
-        "qty_btc": ${Number(qtyBtc)},
-    }
-    slippage_model = "${slippageModel}"
-    position_mode = "${positionMode}"
-
-    def on_event(self, event, ctx):
-        ${signalCheckCode}
-        if self.params["follower"] not in event.lagging_followers:
-            return None
-        if event.magnitude_sigma < self.params["min_magnitude"]:
-            return None
-        bbo = ctx.bbo.get(self.params["follower"])
-        if bbo and bbo.available and bbo.spread_bps > self.params["max_bbo_spread_bps"]:
-            return None
-        return Order(
-            venue=self.params["follower"],
-            side="buy" if event.direction > 0 else "sell",
-            qty_btc=self.params["qty_btc"],
-            entry_type=self.params["entry_type"],
-            hold_ms=self.params["hold_ms"],
-        )`;
-
-  try {
-    const resp = await postJSON("/api/strategies/save", { name, code });
-    document.getElementById("createResult").textContent = `Saved: ${name}.py`;
-    loadAll();
-  } catch (err) {
-    document.getElementById("createResult").textContent = `Error: ${err.message}`;
-  }
-};
 
 document.getElementById("compareBtn").onclick = compareSelected;
 

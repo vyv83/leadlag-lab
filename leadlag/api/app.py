@@ -15,6 +15,8 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -26,7 +28,7 @@ from leadlag import load_session, load_strategy, run_backtest, list_sessions as 
 from leadlag.backtest import BacktestResult
 from leadlag.collections import get_collection, list_collections
 from leadlag.contracts import ContractError, read_json
-from leadlag.session import Session
+from leadlag.session import Session, make_session_id
 from leadlag.monitor import system_stats, read_history, read_pings, list_data_files, read_collector_log, system_processes
 from leadlag.monitor.snapshot import read_collector_status
 from leadlag.venues import REGISTRY
@@ -36,6 +38,7 @@ DATA_DIR = Path("data")
 COLLECTOR_PROC: "subprocess.Popen | None" = None
 PAPER_PROC: "subprocess.Popen | None" = None
 UI_DIR = Path(__file__).parent.parent / "ui"
+ANALYSIS_JOBS_DIRNAME = ".analysis_jobs"
 
 app = FastAPI(title="leadlag-platform", version="0.1.0")
 
@@ -68,40 +71,161 @@ def api_collections():
     return [_public_collection(c) for c in list_collections(DATA_DIR)]
 
 
+def _analysis_job_path(data_dir: Path | str, job_id: str) -> Path:
+    root = Path(data_dir) / ANALYSIS_JOBS_DIRNAME
+    root.mkdir(parents=True, exist_ok=True)
+    return root / f"{job_id}.json"
+
+
+def _write_analysis_job(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(path)
+
+
+def _normalize_analysis_params(body: dict | None) -> dict:
+    raw = body.get("params") if isinstance((body or {}).get("params"), dict) else dict(body or {})
+    return {
+        "bin_size_ms": int(raw.get("bin_size_ms", 50)),
+        "ema_span_bins": int(raw.get("ema_span_bins", raw.get("ema_span", 200))),
+        "threshold_sigma": float(raw.get("threshold_sigma", 2.0)),
+        "follower_max_dev": float(raw.get("follower_max_dev", 0.5)),
+        "cluster_gap_bins": int(raw.get("cluster_gap_bins", 60)),
+        "detection_window_bins": int(raw.get("detection_window_bins", 10)),
+        "confirm_window_bins": int(raw.get("confirm_window_bins", 10)),
+        "window_ms": int(raw.get("window_ms", 10_000)),
+    }
+
+
+def _analyze_worker(job_path: str, job_id: str, collection_id: str, tick_files: list, bbo_files: list, params: dict, data_dir: str) -> dict:
+    """Runs in a subprocess so OOM-kill doesn't take down uvicorn."""
+    from pathlib import Path
+
+    status_path = Path(job_path)
+
+    def update(stage: str, message: str, progress: float, *, status: str = "running", extra: dict | None = None) -> None:
+        current = {
+            "job_id": job_id,
+            "collection_id": collection_id,
+            "session_id": make_session_id(collection_id, params),
+            "status": status,
+            "stage": stage,
+            "message": message,
+            "progress": max(0.0, min(1.0, float(progress))),
+            "params": params,
+            "updated_at_ms": int(time.time() * 1000),
+        }
+        if extra:
+            current.update(extra)
+        _write_analysis_job(status_path, current)
+
+    update("starting", "Worker process started", 0.01)
+    session = Session.build_from_raw(
+        collection_id, tick_files, bbo_files,
+        bin_size_ms=params["bin_size_ms"],
+        ema_span_bins=params["ema_span_bins"],
+        threshold_sigma=params["threshold_sigma"],
+        follower_max_dev=params["follower_max_dev"],
+        cluster_gap_bins=params["cluster_gap_bins"],
+        detection_window_bins=params["detection_window_bins"],
+        confirm_window_bins=params["confirm_window_bins"],
+        window_ms=params["window_ms"],
+        progress_callback=update,
+    )
+    update("saving", "Saving analysis artifacts", 0.98)
+    out = session.save(Path(data_dir))
+    result = {
+        "session_id": session.session_id,
+        "n_events": session.events.count,
+        "path": str(out),
+    }
+    update("complete", f"Analysis ready: {session.events.count} events", 1.0, status="completed", extra=result)
+    return result
+
+
 @app.post("/api/collections/{collection_id}/analyze")
 def api_collection_analyze(collection_id: str, body: dict = Body(default_factory=dict)):
+    import multiprocessing
+
     collection = get_collection(DATA_DIR, collection_id)
     if collection is None:
         raise HTTPException(404, {"error": "collection_not_found", "collection_id": collection_id})
     if not collection.get("tick_file_paths"):
         raise HTTPException(400, {"error": "collection_has_no_ticks", "collection_id": collection_id})
 
-    params = body.get("params") if isinstance(body.get("params"), dict) else dict(body or {})
-    try:
-        session = Session.build_from_raw(
+    params = _normalize_analysis_params(body)
+    session_id = make_session_id(collection_id, params)
+    will_overwrite = (DATA_DIR / "sessions" / session_id).exists()
+    job_id = str(uuid.uuid4())
+    job_path = _analysis_job_path(DATA_DIR, job_id)
+    payload = {
+        "job_id": job_id,
+        "collection_id": collection_id,
+        "session_id": session_id,
+        "status": "queued",
+        "stage": "queued",
+        "message": "Analysis queued",
+        "progress": 0.0,
+        "params": params,
+        "updated_at_ms": int(time.time() * 1000),
+        "will_overwrite": will_overwrite,
+    }
+    _write_analysis_job(job_path, payload)
+
+    ctx = multiprocessing.get_context("spawn")
+    proc = ctx.Process(
+        target=_run_analysis_job,
+        args=(
+            str(job_path),
+            job_id,
             collection_id,
             collection["tick_file_paths"],
             collection.get("bbo_file_paths") or [],
-            bin_size_ms=int(params.get("bin_size_ms", 50)),
-            ema_span_bins=int(params.get("ema_span_bins", params.get("ema_span", 200))),
-            threshold_sigma=float(params.get("threshold_sigma", 2.0)),
-            follower_max_dev=float(params.get("follower_max_dev", 0.5)),
-            cluster_gap_bins=int(params.get("cluster_gap_bins", 60)),
-            detection_window_bins=int(params.get("detection_window_bins", 10)),
-            confirm_window_bins=int(params.get("confirm_window_bins", 10)),
-            window_ms=int(params.get("window_ms", 10_000)),
-        )
-        out = session.save(DATA_DIR)
-    except Exception as e:
-        raise HTTPException(400, {"error": "analysis_failed", "type": type(e).__name__, "message": str(e)})
+            params,
+            str(DATA_DIR),
+        ),
+        daemon=True,
+    )
+    proc.start()
     return {
         "ok": True,
+        "queued": True,
+        "job_id": job_id,
         "collection_id": collection_id,
-        "session_id": session.session_id,
-        "events_count": session.events.count,
-        "n_events": session.events.count,
-        "path": str(out),
+        "session_id": session_id,
+        "will_overwrite": will_overwrite,
+        "status_url": f"/api/analysis-jobs/{job_id}",
     }
+
+
+def _run_analysis_job(job_path: str, job_id: str, collection_id: str, tick_files: list, bbo_files: list, params: dict, data_dir: str) -> None:
+    try:
+        _analyze_worker(job_path, job_id, collection_id, tick_files, bbo_files, params, data_dir)
+    except Exception as e:
+        _write_analysis_job(Path(job_path), {
+            "job_id": job_id,
+            "collection_id": collection_id,
+            "session_id": make_session_id(collection_id, params),
+            "status": "failed",
+            "stage": "failed",
+            "message": str(e),
+            "error": {
+                "type": type(e).__name__,
+                "message": str(e),
+            },
+            "progress": 1.0,
+            "params": params,
+            "updated_at_ms": int(time.time() * 1000),
+        })
+
+
+@app.get("/api/analysis-jobs/{job_id}")
+def api_analysis_job_status(job_id: str):
+    job_path = _analysis_job_path(DATA_DIR, job_id)
+    if not job_path.exists():
+        raise HTTPException(404, {"error": "analysis_job_not_found", "job_id": job_id})
+    return json.loads(job_path.read_text())
 
 
 @app.get("/api/sessions/{session_id}/meta")
@@ -217,11 +341,56 @@ def strategy_detail(name: str):
 
 
 @app.delete("/api/strategies/{name}")
-def delete_strategy(name: str):
+def delete_strategy(name: str, include_notebook: bool = Query(default=False)):
     p = DATA_DIR / "strategies" / f"{name}.py"
-    if p.exists():
-        p.unlink()
-    return {"ok": True}
+    if not p.exists():
+        raise HTTPException(404, "strategy not found")
+    # cascade: delete related backtests + MC
+    bt_root = DATA_DIR / "backtest"
+    removed_backtests = 0
+    if bt_root.is_dir():
+        for d in list(bt_root.iterdir()):
+            if not d.is_dir():
+                continue
+            meta_p = d / "meta.json"
+            if not meta_p.exists():
+                continue
+            try:
+                meta = json.loads(meta_p.read_text())
+            except Exception:
+                continue
+            if meta.get("strategy_name") == name:
+                shutil.rmtree(d, ignore_errors=True)
+                removed_backtests += 1
+    # cascade: delete related paper runs
+    paper_root = DATA_DIR / "paper"
+    if paper_root.is_dir():
+        for d in list(paper_root.iterdir()):
+            if not d.is_dir():
+                continue
+            cfg_p = d / "config.json"
+            if not cfg_p.exists():
+                if d.name == name:
+                    shutil.rmtree(d, ignore_errors=True)
+                continue
+            try:
+                cfg = json.loads(cfg_p.read_text())
+            except Exception:
+                continue
+            if cfg.get("strategy_name") == name or d.name == name:
+                shutil.rmtree(d, ignore_errors=True)
+    # delete .py
+    p.unlink()
+    # optionally delete notebook
+    nb_deleted = False
+    if include_notebook:
+        for nb_dir in [DATA_DIR.parent / "notebooks", DATA_DIR / "notebooks"]:
+            nb_p = nb_dir / f"{name}.ipynb"
+            if nb_p.exists():
+                nb_p.unlink()
+                nb_deleted = True
+                break
+    return {"ok": True, "removed_backtests": removed_backtests, "notebook_deleted": nb_deleted}
 
 
 @app.post("/api/strategies/save")
@@ -338,7 +507,74 @@ def backtest_run(body: dict = Body(...)):
     return {"backtest_id": out.name, "n_trades": len(result.trades), "stats": result.stats}
 
 
-@app.post("/api/backtests/{bt_id}/montecarlo/run")
+@app.delete("/api/backtests/{bt_id}")
+def delete_backtest(bt_id: str):
+    bt_root = DATA_DIR / "backtest" / bt_id
+    if not bt_root.is_dir():
+        raise HTTPException(404, f"backtest not found: {bt_id}")
+    shutil.rmtree(bt_root)
+    return {"ok": True}
+
+
+@app.get("/api/notebooks")
+def list_notebooks():
+    out = []
+    for nb_dir in [DATA_DIR.parent / "notebooks", DATA_DIR / "notebooks"]:
+        if not nb_dir.is_dir():
+            continue
+        for p in nb_dir.glob("*.ipynb"):
+            if p.stem not in [n["name"] for n in out]:
+                out.append({"name": p.stem, "path": str(p)})
+    return out
+
+
+@app.delete("/api/backtests/{bt_id}/montecarlo")
+def delete_montecarlo(bt_id: str):
+    mc_path = DATA_DIR / "backtest" / bt_id / "montecarlo.json"
+    if not mc_path.exists():
+        raise HTTPException(404, "Monte Carlo results not found")
+    mc_path.unlink()
+    return {"ok": True}
+
+
+@app.delete("/api/collections/{collection_id}")
+def delete_collection(collection_id: str):
+    """Delete a collection (raw parquet files) and all related analyses."""
+    removed_analyses = 0
+    # find and delete related sessions/analyses
+    sessions_dir = DATA_DIR / "sessions"
+    if sessions_dir.is_dir():
+        for d in list(sessions_dir.iterdir()):
+            if not d.is_dir():
+                continue
+            # sessions whose ID starts with the collection ID prefix
+            # or that reference this collection in their metadata
+            meta_p = d / "meta.json"
+            if meta_p.exists():
+                try:
+                    meta = json.loads(meta_p.read_text())
+                    if meta.get("collection_id") == collection_id or d.name.startswith(collection_id.split("_")[0]):
+                        shutil.rmtree(d, ignore_errors=True)
+                        removed_analyses += 1
+                        continue
+                except Exception:
+                    pass
+            # fallback: check if session starts with collection timestamp prefix
+            prefix = "_".join(collection_id.split("_")[:3])
+            if d.name.startswith(prefix):
+                shutil.rmtree(d, ignore_errors=True)
+                removed_analyses += 1
+    # delete raw tick/bbo files for this collection
+    ticks_dir = DATA_DIR / "ticks"
+    bbo_dir = DATA_DIR / "bbo"
+    removed_files = 0
+    for d in [ticks_dir, bbo_dir]:
+        if not d.is_dir():
+            continue
+        for f in list(d.glob(f"{collection_id}*")):
+            f.unlink()
+            removed_files += 1
+    return {"ok": True, "removed_analyses": removed_analyses, "removed_files": removed_files}
 def backtest_montecarlo_run(bt_id: str, body: dict = Body(default_factory=dict)):
     bt_root = DATA_DIR / "backtest" / bt_id
     if not bt_root.is_dir():

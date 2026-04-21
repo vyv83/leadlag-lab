@@ -1,4 +1,4 @@
-from leadlag.session import Session, load_session, list_sessions
+from leadlag.session import Session, load_session, list_sessions, iter_ticks_batches, iter_bbo_batches
 from leadlag.strategy import Strategy, Order, Event, Context, BboSnapshot
 from leadlag.strategy_loader import load_strategy, save_strategy_source, export_strategy, list_strategies
 from leadlag.backtest import run_backtest, BacktestResult
@@ -8,6 +8,8 @@ __all__ = [
     "Session",
     "load_session",
     "list_sessions",
+    "iter_ticks_batches",
+    "iter_bbo_batches",
     "Strategy",
     "Order",
     "Event",

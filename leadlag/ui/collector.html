@@ -10,6 +10,7 @@
 <nav>
   <a href="dashboard.html">Dashboard</a>
   <a href="collector.html" class="active">Collector</a>
+  <a href="recordings.html">Recordings</a>
   <a href="explorer.html">Explorer</a>
   <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
@@ -125,7 +126,7 @@ function renderStatus(st) {
   const rows = [
     ["running", checkMark(st.running)],
     ["proc alive", checkMark(st.proc_alive)],
-    ["session id", st.session_id || "—"],
+    ["recording id", st.session_id || "—"],
     ["started UTC", utc(st.start_time)],
     ["planned", `${fmt(st.planned_duration_s, 0)}s`],
     ["rotation", `${fmt(st.rotation_s, 0)}s`],
@@ -233,11 +234,29 @@ document.getElementById("restart").onclick = async () => {
 };
 document.getElementById("analyzeLatest").onclick = async () => {
   if (!collections.length) return;
-  const res = await postJSON(`/api/collections/${collections[0].id}/analyze`, {
-    params: { bin_size_ms: Number(document.getElementById("binSize").value || 50) }
-  });
-  location.href = `explorer.html?session=${res.session_id}`;
+  const btn = document.getElementById("analyzeLatest");
+  btn.disabled = true;
+  try {
+    const res = await postJSON(`/api/collections/${collections[0].id}/analyze`, {
+      params: { bin_size_ms: Number(document.getElementById("binSize").value || 50) }
+    });
+    await waitForAnalysisJob(res.job_id);
+    location.href = `explorer.html?session=${res.session_id}`;
+  } finally {
+    btn.disabled = false;
+  }
 };
+
+async function waitForAnalysisJob(jobId, timeoutMs = 600000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const job = await fetchJSON(`/api/analysis-jobs/${jobId}`);
+    if (job.status === "completed") return job;
+    if (job.status === "failed") throw new Error(job.error?.message || job.message || "Analysis failed");
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  throw new Error("Analysis polling timeout");
+}
 
 (async () => {
   try {

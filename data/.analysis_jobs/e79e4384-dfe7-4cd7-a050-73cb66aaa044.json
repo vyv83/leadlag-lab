@@ -1,0 +1,22 @@
+{
+  "job_id": "e79e4384-dfe7-4cd7-a050-73cb66aaa044",
+  "collection_id": "20260419_080345",
+  "session_id": "20260419_080345_bf58fb92",
+  "status": "completed",
+  "stage": "complete",
+  "message": "Analysis ready: 96 events",
+  "progress": 1.0,
+  "params": {
+    "bin_size_ms": 30,
+    "ema_span_bins": 200,
+    "threshold_sigma": 3.0,
+    "follower_max_dev": 0.5,
+    "cluster_gap_bins": 60,
+    "detection_window_bins": 10,
+    "confirm_window_bins": 10,
+    "window_ms": 10000
+  },
+  "updated_at_ms": 1776753683691,
+  "n_events": 96,
+  "path": "data/sessions/20260419_080345_bf58fb92"
+}

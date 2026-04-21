@@ -12,6 +12,7 @@
 <nav>
   <a href="dashboard.html">Dashboard</a>
   <a href="collector.html">Collector</a>
+  <a href="recordings.html">Recordings</a>
   <a href="explorer.html">Explorer</a>
   <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
@@ -36,6 +37,7 @@
     <label>Seed <input id="seed" type="number" step="1" value="42"></label>
     <button id="run">Run</button>
     <button id="refresh">Refresh Results</button>
+    <button id="deleteMc" style="color:#f85149" hidden>Delete MC Results</button>
     <a id="backLink" class="button-link" href="backtest.html">Back to Backtest</a>
   </div>
   <div id="status" class="muted">Loading backtests...</div>
@@ -100,6 +102,7 @@ async function loadBacktest(id) {
   if (!mc || !mc.n_simulations) {
     document.getElementById("cards").hidden = true;
     document.getElementById("charts").hidden = true;
+    document.getElementById("deleteMc").hidden = true;
     document.getElementById("status").textContent = "No Monte Carlo result yet. Choose settings and run.";
     return;
   }
@@ -144,6 +147,7 @@ function renderCards() {
   document.getElementById("cards").hidden = false;
   renderWarnings();
   renderMcDecision();
+  document.getElementById("deleteMc").hidden = false;
 }
 
 function renderCharts() {
@@ -240,6 +244,18 @@ function updateMethodHelp() {
   }[method] || "";
   document.getElementById("methodHelp").textContent = text;
 }
+
+document.getElementById("deleteMc").onclick = async () => {
+  if (!confirm("Delete Monte Carlo results? Backtest data remains.")) return;
+  // delete just the montecarlo.json file via the backtest delete MC endpoint
+  const bt_root = currentId;
+  try {
+    await apiFetch(`/api/backtests/${bt_root}/montecarlo`, { method: "DELETE" });
+    await loadBacktest(currentId);
+  } catch (err) {
+    showError("#status", err);
+  }
+};
 
 function histogram(id, values, title, xTitle, marker) {
   const traces = [{ x: values, type: "histogram", name: title, marker: { color: "#58a6ff" } }];

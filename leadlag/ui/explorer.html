@@ -12,6 +12,7 @@
 <nav>
   <a href="dashboard.html">Dashboard</a>
   <a href="collector.html">Collector</a>
+  <a href="recordings.html">Recordings</a>
   <a href="explorer.html" class="active">Explorer</a>
   <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
@@ -24,7 +25,7 @@
 <main>
 <section>
   <div class="toolbar">
-    <label>Session <select id="session"></select></label>
+    <label>Analysis <select id="session"></select></label>
     <span class="segmented" id="signalButtons">
       <button data-group="signal" data-value="">All</button>
       <button data-group="signal" data-value="A">A</button>
@@ -60,7 +61,7 @@
     <a id="viewBacktest" class="button-link" href="#" hidden>View Backtest</a>
     <span id="summary" class="muted"></span>
   </div>
-  <div id="status" class="muted">Loading sessions...</div>
+  <div id="status" class="muted">Loading analyses...</div>
 </section>
 
 <section class="explorer-grid">
@@ -88,6 +89,17 @@
     </tr></thead><tbody></tbody></table>
   </div>
 </section>
+
+<section id="runBacktestSection" hidden>
+  <h2>Run Backtest with this Analysis</h2>
+  <div id="strategyList" class="toolbar" style="flex-wrap:wrap"></div>
+  <div class="toolbar" style="margin-top:4px">
+    <label>Override <input id="btOverride" style="width:280px" placeholder='{"hold_ms":30000}'></label>
+    <button id="btRunBtn">Run Backtest</button>
+    <span id="btRunResult" class="muted"></span>
+  </div>
+</section>
+
 </main>
 <script src="app.js"></script>
 <script>
@@ -113,7 +125,7 @@ async function loadSessions() {
   sessions = await fetchJSON("/api/sessions");
   const sel = document.getElementById("session");
   if (!sessions.length) {
-    document.getElementById("status").textContent = "No analyzed sessions yet.";
+    document.getElementById("status").textContent = "No analyses yet.";
     return;
   }
   sel.innerHTML = sessions.map(s => `<option value="${s.id}">${s.id} (${s.n_events || 0})</option>`).join("");
@@ -499,11 +511,60 @@ function initSignalLabels() {
     .catch(() => {});
 }
 
+// ── Run Backtest Section ──
+let explorerStrategies = [];
+let selectedBtStrategy = null;
+
+async function loadExplorerStrategies() {
+  try {
+    explorerStrategies = await fetchJSON("/api/strategies");
+  } catch { explorerStrategies = []; }
+  const box = document.getElementById("strategyList");
+  const valid = explorerStrategies.filter(s => s.valid);
+  if (!valid.length || !selectedSession()) {
+    document.getElementById("runBacktestSection").hidden = true;
+    return;
+  }
+  document.getElementById("runBacktestSection").hidden = false;
+  box.innerHTML = "";
+  valid.forEach(s => {
+    const latest = s.last_backtest_summary;
+    const label = document.createElement("label");
+    label.style.whiteSpace = "nowrap";
+    let info = s.name;
+    if (latest) info += ` (last: ${signed(Number(latest.total_net_pnl_bps || 0))}bps, ${latest.n_trades} trades)`;
+    else info += " (no backtests yet)";
+    label.innerHTML = `<input type="radio" name="btStrat" value="${s.name}" ${selectedBtStrategy === s.name ? "checked" : ""}> ${info}`;
+    label.querySelector("input").onchange = () => { selectedBtStrategy = s.name; };
+    if (!selectedBtStrategy && valid.indexOf(s) === 0) {
+      label.querySelector("input").checked = true;
+      selectedBtStrategy = s.name;
+    }
+    box.appendChild(label);
+  });
+}
+
+document.getElementById("btRunBtn").onclick = async () => {
+  if (!selectedBtStrategy) return alert("Select a strategy first");
+  const sessionId = selectedSession();
+  const raw = document.getElementById("btOverride").value.trim();
+  const body = { strategy_name: selectedBtStrategy, session_id: sessionId };
+  if (raw) { try { body.params_override = JSON.parse(raw); } catch { alert("bad JSON"); return; } }
+  document.getElementById("btRunResult").textContent = "Running...";
+  try {
+    const res = await postJSON("/api/backtests/run", body);
+    document.getElementById("btRunResult").innerHTML = `Running... <a href="backtest.html?id=${res.backtest_id}">\u2192 View Backtest</a>`;
+  } catch (err) {
+    document.getElementById("btRunResult").textContent = `Error: ${err.message}`;
+  }
+};
+
 (async () => {
   try {
     setActiveButton("signal", "");
     initSignalLabels();
     await loadSessions();
+    await loadExplorerStrategies();
   } catch (err) {
     showError("#status", err);
   }

@@ -11,6 +11,7 @@
 <nav>
   <a href="dashboard.html" class="active">Dashboard</a>
   <a href="collector.html">Collector</a>
+  <a href="recordings.html">Recordings</a>
   <a href="explorer.html">Explorer</a>
   <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
@@ -60,7 +61,7 @@
       <button id="clearStale" hidden>Clear stale status</button>
       <button id="runAnalysisLatest">Run Analysis</button>
       <a class="button-link" href="collector.html">Open Collector</a>
-      <a id="openLatest" class="button-link" href="explorer.html">Open Latest Session</a>
+      <a id="openLatest" class="button-link" href="explorer.html">Open Latest Analysis</a>
     </div>
     <div class="table-scroll">
     <table id="collectorVenues"><thead><tr>
@@ -107,11 +108,11 @@
 <div class="section-group">
   <section class="breakdown-grid">
     <div>
-      <h2>Latest Collections</h2>
+      <h2>Latest Recordings</h2>
       <div class="table-scroll"><table id="collections"><thead><tr><th>id</th><th>range UTC</th><th>ticks</th><th>BBO</th><th>venues</th><th>analysis</th></tr></thead><tbody></tbody></table></div>
     </div>
     <div>
-      <h2>Latest Sessions</h2>
+      <h2>Latest Analyses</h2>
       <div class="table-scroll"><table id="sessions"><thead><tr><th>id</th><th>date</th><th>events</th><th>A/B/C</th><th>venues</th></tr></thead><tbody></tbody></table></div>
     </div>
     <div>
@@ -167,8 +168,8 @@ async function refreshAll() {
 function renderTop(sys, collector, paper, collections, sessions, backtests, strategies) {
   fillCards("topCards", [
     ["UTC", utc(sys.ts)],
-    ["Collections", `${collections.length} raw`],
-    ["Sessions", `${sessions.length} total`],
+    ["Recordings", `${collections.length} raw`],
+    ["Analyses", `${sessions.length} total`],
     ["Strategies", `${strategies.length} total`],
     ["Backtests", `${backtests.length} total`],
     ["Collector", collector.stale ? `stale ${collector.session_id || ""}` : collector.running ? `running ${collector.session_id || ""}` : "stopped"],
@@ -316,10 +317,26 @@ function renderPaperStatus(paper) {
 
 async function runAnalysis(collectionId) {
   document.getElementById("runAnalysisLatest").disabled = true;
-  const res = await postJSON(`/api/collections/${collectionId}/analyze`, {
-    params: { bin_size_ms: 50, ema_span_bins: 200, threshold_sigma: 2.0, follower_max_dev: 0.5 }
-  });
-  location.href = `explorer.html?session=${res.session_id}`;
+  try {
+    const res = await postJSON(`/api/collections/${collectionId}/analyze`, {
+      params: { bin_size_ms: 50, ema_span_bins: 200, threshold_sigma: 2.0, follower_max_dev: 0.5 }
+    });
+    await waitForAnalysisJob(res.job_id);
+    location.href = `explorer.html?session=${res.session_id}`;
+  } finally {
+    document.getElementById("runAnalysisLatest").disabled = false;
+  }
+}
+
+async function waitForAnalysisJob(jobId, timeoutMs = 600000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const job = await fetchJSON(`/api/analysis-jobs/${jobId}`);
+    if (job.status === "completed") return job;
+    if (job.status === "failed") throw new Error(job.error?.message || job.message || "Analysis failed");
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  throw new Error("Analysis polling timeout");
 }
 
 function dashSelectedVenues() {

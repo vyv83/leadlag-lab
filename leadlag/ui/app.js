@@ -8,8 +8,8 @@ async function fetchJSON(url) {
   const full = url.startsWith("/api") ? api(url) : url;
   const r = await fetch(full);
   if (!r.ok) {
-    let detail = "";
-    try { detail = JSON.stringify(await r.json()); } catch (_) { detail = await r.text(); }
+    const text = await r.text();
+    let detail; try { detail = JSON.stringify(JSON.parse(text)); } catch (_) { detail = text; }
     throw new Error(`${full}: ${r.status} ${detail}`);
   }
   return r.json();
@@ -22,8 +22,8 @@ async function postJSON(url, body) {
     body: JSON.stringify(body || {}),
   });
   if (!r.ok) {
-    let detail = "";
-    try { detail = JSON.stringify(await r.json()); } catch (_) { detail = await r.text(); }
+    const text = await r.text();
+    let detail; try { detail = JSON.stringify(JSON.parse(text)); } catch (_) { detail = text; }
     throw new Error(`${full}: ${r.status} ${detail}`);
   }
   return r.json();

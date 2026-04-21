@@ -195,9 +195,59 @@ h3 { font-size: 11px; color: #8b949e; font-weight: 600; margin: 0 0 6px; text-tr
   background: rgba(22,27,34,0.4);
 }
 
+/* ── Recordings / Inline Forms ── */
+.new-analysis-form {
+  display: grid;
+  grid-template-columns: minmax(300px, 420px) minmax(260px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.na-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px 12px;
+}
+.na-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.na-field label {
+  color: #8b949e;
+  display: block;
+}
+.na-field input {
+  width: 100%;
+  min-width: 0;
+}
+.na-actions {
+  min-width: 0;
+}
+.na-progress {
+  margin-top: 6px;
+}
+.na-progress-bar {
+  width: min(420px, 100%);
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #161b22;
+  border: 1px solid #30363d;
+}
+.na-progress-fill {
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #1f6feb, #3fb950);
+  transition: width 0.25s ease;
+}
+.na-progress-text {
+  margin-top: 6px;
+}
+
 /* ── Responsive ── */
 @media (max-width: 980px) {
   .kpi-groups { grid-template-columns: 1fr; }
   .explorer-grid, .trade-grid { grid-template-columns: 1fr; }
   aside { border-left: 0; padding-left: 0; }
+  .new-analysis-form { grid-template-columns: 1fr; }
 }

@@ -12,6 +12,7 @@
 <nav>
   <a href="dashboard.html">Dashboard</a>
   <a href="collector.html">Collector</a>
+  <a href="recordings.html">Recordings</a>
   <a href="explorer.html">Explorer</a>
   <a href="quality.html" class="active">Quality</a>
   <a href="strategy.html">Strategies</a>
@@ -24,7 +25,7 @@
 <main>
 <section>
   <div class="toolbar">
-    <label>Session <select id="session"></select></label>
+    <label>Analysis <select id="session"></select></label>
     <button id="onlyBad">Show only bad/warning</button>
     <button id="showAll">Show all</button>
     <a id="explorerLink" class="button-link" href="#">Open Session in Explorer</a>
@@ -46,7 +47,7 @@
 </section>
 
 <div id="qualityDecision" class="decision-strip" hidden>
-  <span class="hint">Session ready?</span>
+  <span class="hint">Analysis ready?</span>
   <span id="qdMsg">—</span>
   <a id="qdExplorer" href="#" class="button-link">Open in Explorer →</a>
   <a href="/leadlag-lab/lab/" target="_blank" class="hint" style="margin-left:8px">← Exclude bad venues in Notebook ↗</a>
@@ -90,7 +91,7 @@ async function init() {
   sessions = await fetchJSON("/api/sessions");
   const sel = document.getElementById("session");
   if (!sessions.length) {
-    document.getElementById("cards").innerHTML = `<div class="banner">No analyzed sessions yet.</div>`;
+    document.getElementById("cards").innerHTML = `<div class="banner">No analyses yet.</div>`;
     return;
   }
   sel.innerHTML = sessions.map(s => `<option value="${s.id}">${s.id}</option>`).join("");
@@ -119,7 +120,7 @@ function renderCards(q, meta) {
   const warn = rows.filter(r => r.flag === "warning").length;
   const bad = rows.filter(r => r.flag === "bad").length;
   fillCards("cards", [
-    ["Session", meta.session_id || document.getElementById("session").value],
+    ["Analysis", meta.session_id || document.getElementById("session").value],
     ["Time range", `${utc(q.t_start_ms)} → ${utc(q.t_end_ms)}`],
     ["Duration", `${fmt(q.duration_s, 0)}s`],
     ["Venues", rows.length],

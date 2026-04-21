@@ -12,6 +12,8 @@ from leadlag import (
     Order,
     Session,
     Strategy,
+    iter_bbo_batches,
+    iter_ticks_batches,
     list_sessions,
     load_session,
     run_backtest,
@@ -134,6 +136,86 @@ class LighterSignalC(Strategy):
     mc = client.post(f"/api/backtests/{body['backtest_id']}/montecarlo/run", json={"n": 50})
     assert mc.status_code == 200, mc.text
     assert (tmp_path / "backtest" / body["backtest_id"] / "montecarlo.json").exists()
+
+
+def test_build_from_raw_uses_batched_tick_scan(tmp_path: Path):
+    ticks_dir = tmp_path / "ticks" / "2026-04-19"
+    bbo_dir = tmp_path / "bbo" / "2026-04-19"
+    ticks_dir.mkdir(parents=True)
+    bbo_dir.mkdir(parents=True)
+
+    tick_rows = []
+    bbo_rows = []
+    for i in range(500):
+        ts = BASE_TS + i * 50
+        okx_price = 100_000.0 + (25.0 if i >= 260 else 0.0)
+        bybit_price = 100_001.0 + (22.0 if i >= 261 else 0.0)
+        lighter_price = 50_000.0 + max(0, i - 266) * 2.2
+        for venue, price in [
+            ("OKX Perp", okx_price),
+            ("Bybit Perp", bybit_price),
+            ("Lighter Perp", lighter_price),
+        ]:
+            tick_rows.append({
+                "ts_ms": ts,
+                "price": price,
+                "qty": 0.01,
+                "side": "buy" if i % 2 == 0 else "sell",
+                "venue": venue,
+            })
+            bbo_rows.append({
+                "ts_ms": ts,
+                "bid_price": price - 1.0,
+                "bid_qty": 1.0,
+                "ask_price": price + 1.0,
+                "ask_qty": 1.0,
+                "venue": venue,
+            })
+
+    pd.DataFrame(tick_rows).to_parquet(ticks_dir / "ticks_demo.parquet")
+    pd.DataFrame(bbo_rows).to_parquet(bbo_dir / "bbo_demo.parquet")
+
+    session = Session.build_from_raw(
+        "20260419_000000",
+        [str(ticks_dir / "ticks_demo.parquet")],
+        [str(bbo_dir / "bbo_demo.parquet")],
+        bin_size_ms=50,
+        ema_span_bins=50,
+        threshold_sigma=1.0,
+        confirm_window_bins=5,
+    )
+
+    assert session.meta["n_ticks"] == len(tick_rows)
+    assert session.quality["venues"]["Lighter Perp"]["ticks_total"] == 500
+    assert session.quality["venues"]["Lighter Perp"]["side_buy_pct"] == 0.5
+    assert session.vwap_df is not None
+    assert len(session.vwap_df) == 500
+    assert session.events.count >= 1
+
+
+def test_public_batch_iterators_filter_by_date_and_venue(tmp_path: Path):
+    ticks_dir = tmp_path / "ticks" / "2026-04-19"
+    bbo_dir = tmp_path / "bbo" / "2026-04-19"
+    ticks_dir.mkdir(parents=True)
+    bbo_dir.mkdir(parents=True)
+
+    pd.DataFrame([
+        {"ts_ms": BASE_TS, "price": 100.0, "qty": 0.1, "side": "buy", "venue": "OKX Perp"},
+        {"ts_ms": BASE_TS + 50, "price": 101.0, "qty": 0.1, "side": "sell", "venue": "Lighter Perp"},
+    ]).to_parquet(ticks_dir / "ticks_demo.parquet")
+
+    pd.DataFrame([
+        {"ts_ms": BASE_TS, "bid_price": 99.5, "bid_qty": 1.0, "ask_price": 100.5, "ask_qty": 1.0, "venue": "OKX Perp"},
+        {"ts_ms": BASE_TS + 50, "bid_price": 100.5, "bid_qty": 1.0, "ask_price": 101.5, "ask_qty": 1.0, "venue": "Lighter Perp"},
+    ]).to_parquet(bbo_dir / "bbo_demo.parquet")
+
+    tick_batches = list(iter_ticks_batches(tmp_path, date_from="2026-04-19", date_to="2026-04-20", venues=["OKX Perp"], batch_rows=1))
+    bbo_batches = list(iter_bbo_batches(tmp_path, date_from="2026-04-19", date_to="2026-04-20", venues=["Lighter Perp"], batch_rows=1))
+
+    assert sum(len(b) for b in tick_batches) == 1
+    assert tick_batches[0]["venue"].iloc[0] == "OKX Perp"
+    assert sum(len(b) for b in bbo_batches) == 1
+    assert bbo_batches[0]["venue"].iloc[0] == "Lighter Perp"
 
 
 def _make_session() -> Session:

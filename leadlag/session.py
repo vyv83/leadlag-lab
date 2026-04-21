@@ -13,11 +13,14 @@ from __future__ import annotations
 import glob
 import hashlib
 import json
+import random
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 import numpy as np
 import pandas as pd
+import pyarrow.dataset as ds
+import pyarrow.parquet as pq
 
 from leadlag.contracts import (
     utc_from_ms,
@@ -30,6 +33,9 @@ from leadlag.contracts import (
 
 DEFAULT_DATA_DIR = Path("data")
 SESSION_CONTRACT_VERSION = "session.v1"
+PARQUET_BATCH_ROWS = 250_000
+PRICE_SAMPLE_SIZE = 4096
+TIMELINE_GAP_MS = 10_000
 
 
 def _params_hash(params: dict) -> str:
@@ -430,6 +436,7 @@ class Session:
         detection_window_bins: int = 10,
         confirm_window_bins: int = 10,
         window_ms: int = 10_000,
+        progress_callback=None,
     ) -> "Session":
         """Run the full batch pipeline over raw parquet files."""
         from leadlag.analysis.binning import bin_to_vwap
@@ -437,6 +444,10 @@ class Session:
         from leadlag.analysis.detection import classify_signals, cluster_events_first, detect_events
         from leadlag.analysis.metrics import bootstrap_ci, compute_metrics, grid_search
         from leadlag.venues import BBO_UNAVAILABLE_VENUES, LEADERS, REGISTRY
+
+        def progress(stage: str, message: str, value: float) -> None:
+            if progress_callback:
+                progress_callback(stage, message, value)
 
         params = {
             "bin_size_ms": bin_size_ms,
@@ -449,24 +460,35 @@ class Session:
             "window_ms": window_ms,
         }
         session_id = make_session_id(collection_id, params)
+        progress("files", "Resolving raw parquet files", 0.02)
         tick_files = _files_for(ticks_path_glob)
         bbo_files = _files_for(bbo_path_glob) if bbo_path_glob else []
 
-        df_ticks = _read_parquets(tick_files)
-        if df_ticks.empty:
+        progress("ticks", f"Scanning {len(tick_files)} tick parquet files in batches", 0.08)
+        tick_scan = _scan_ticks_batched(tick_files, bin_size_ms=bin_size_ms)
+        if tick_scan["n_ticks"] <= 0:
             raise ValueError("No tick rows available for analysis")
-        df_ticks = df_ticks.sort_values("ts_ms").reset_index(drop=True)
-        df_ticks = df_ticks.drop_duplicates(subset=["ts_ms", "venue", "price", "qty"])
+        progress("ticks", f"Scanned {tick_scan['n_ticks']:,} tick rows", 0.18)
 
-        all_venues_seen = list(df_ticks["venue"].dropna().unique())
+        all_venues_seen = list(tick_scan["venues"])
         leaders = [v for v in LEADERS if v in all_venues_seen]
         followers = sorted([v for v in all_venues_seen if v not in leaders])
         venues = leaders + followers
 
-        vwap_df, t_start, coverage = bin_to_vwap(df_ticks, venues, bin_size_ms=bin_size_ms)
+        progress("binning", f"Binning ticks into {bin_size_ms}ms VWAP series", 0.28)
+        vwap_df, coverage = _build_vwap_from_binned_ticks(
+            tick_scan["grouped_ticks"],
+            venues,
+            tick_scan["t_start_ms"],
+            tick_scan["t_end_ms"],
+            bin_size_ms=bin_size_ms,
+        )
+        t_start = tick_scan["t_start_ms"]
+        progress("ema", f"Computing EMA / deviation for {len(venues)} venues", 0.38)
         ema_df = compute_ema(vwap_df, venues, ema_span_bins=ema_span_bins)
         dev_df, sigma = compute_deviation(vwap_df, ema_df, venues, ema_span_bins=ema_span_bins)
 
+        progress("events", "Detecting lead-lag events", 0.48)
         clustered_by_leader = {}
         for leader in leaders:
             raw = detect_events(
@@ -488,6 +510,7 @@ class Session:
             confirm_window_bins=confirm_window_bins,
         )
 
+        progress("metrics", f"Computing follower metrics for {len(followers)} followers", 0.62)
         metrics_rows: list[dict] = []
         for fol in followers:
             metrics = compute_metrics(all_events, vwap_df, ema_df, fol, bin_size_ms=bin_size_ms)
@@ -506,18 +529,33 @@ class Session:
             for name, cfg in REGISTRY.items()
             if name in venues
         }
+        progress("grid", "Running grid search and attaching event summaries", 0.72)
         grid_df = grid_search(all_events, vwap_df, followers, fees_bps, bin_size_ms=bin_size_ms)
         _attach_grid_results(all_events, grid_df)
         events = _normalize_events(all_events)
 
-        df_bbo = _read_parquets(bbo_files) if bbo_files else pd.DataFrame()
-        if not df_bbo.empty:
-            df_bbo = df_bbo.sort_values("ts_ms").reset_index(drop=True)
+        progress("bbo", f"Loading BBO from {len(bbo_files)} parquet files", 0.80)
+        bbo_scan = _scan_bbo_batched(bbo_files, bin_size_ms=bin_size_ms, t_start_ms=t_start) if bbo_files else {
+            "n_bbo": 0,
+            "grouped_bbo": pd.DataFrame(),
+            "venue_stats": {},
+        }
+        df_bbo = bbo_scan["grouped_bbo"]
 
+        progress("artifacts", "Building event windows and quality artifacts", 0.88)
         price_windows = _build_price_windows(events, vwap_df, venues, bin_size_ms, window_ms)
         bbo_windows = _build_bbo_windows(events, df_bbo, venues, t_start, bin_size_ms, window_ms, BBO_UNAVAILABLE_VENUES)
-        duration_s = (int(df_ticks["ts_ms"].max()) - int(df_ticks["ts_ms"].min())) / 1000.0
-        quality = _build_quality(df_ticks, df_bbo, venues, leaders, coverage, sigma, duration_s, bin_size_ms)
+        duration_s = max(0.0, (int(tick_scan["t_end_ms"]) - int(tick_scan["t_start_ms"])) / 1000.0)
+        quality = _build_quality_from_scans(
+            tick_scan,
+            bbo_scan,
+            venues,
+            leaders,
+            coverage,
+            sigma,
+            duration_s,
+            bin_size_ms,
+        )
 
         metrics_df = pd.DataFrame(metrics_rows)
         ci = _build_ci(grid_df, bootstrap_ci)
@@ -532,8 +570,8 @@ class Session:
                 "ticks": [str(Path(f)) for f in tick_files],
                 "bbo": [str(Path(f)) for f in bbo_files],
             },
-            "t_start_ms": int(df_ticks["ts_ms"].min()),
-            "t_end_ms": int(df_ticks["ts_ms"].max()),
+            "t_start_ms": int(tick_scan["t_start_ms"]),
+            "t_end_ms": int(tick_scan["t_end_ms"]),
             "duration_s": duration_s,
             "bin_size_ms": bin_size_ms,
             "ema_span": ema_span_bins,
@@ -549,8 +587,8 @@ class Session:
                 v: bool(v not in BBO_UNAVAILABLE_VENUES and v in set(df_bbo.get("venue", pd.Series(dtype=str)).unique()))
                 for v in venues
             },
-            "n_ticks": int(len(df_ticks)),
-            "n_bbo": int(len(df_bbo)),
+            "n_ticks": int(tick_scan["n_ticks"]),
+            "n_bbo": int(bbo_scan["n_bbo"]),
             "n_events": len(events),
             "n_signal_a": sum(1 for e in events if e["signal"] == "A"),
             "n_signal_b": sum(1 for e in events if e["signal"] == "B"),
@@ -558,6 +596,7 @@ class Session:
             "created_at_utc": utc_now_iso(),
             "source_data_layout_version": SESSION_CONTRACT_VERSION,
         }
+        progress("done", f"Analysis prepared: {len(events)} events", 0.96)
 
         return cls(
             session_id=session_id,
@@ -661,21 +700,337 @@ def list_sessions(data_dir: Path | str = DEFAULT_DATA_DIR) -> list[dict]:
     return out
 
 
-def _read_parquets(path_or_glob: str | list[str]) -> pd.DataFrame:
+def _read_parquets(path_or_glob: str | list[str], *, columns: list[str] | None = None) -> pd.DataFrame:
     files = _files_for(path_or_glob)
     if not files:
         raise FileNotFoundError(f"No parquet files matched: {path_or_glob}")
-    dfs = []
-    for f in files:
+    try:
+        table = ds.dataset(files, format="parquet").to_table(columns=columns)
+        return table.to_pandas(split_blocks=True, self_destruct=True)
+    except Exception:
+        dfs = []
+        for f in files:
+            try:
+                tmp = pd.read_parquet(f, columns=columns)
+                if len(tmp):
+                    dfs.append(tmp)
+            except Exception:
+                continue
+        if not dfs:
+            return pd.DataFrame(columns=columns)
+        return pd.concat(dfs, ignore_index=True)
+
+
+def _iter_parquet_batches(files: list[str], *, columns: list[str], batch_rows: int = PARQUET_BATCH_ROWS):
+    for file_path in files:
         try:
-            tmp = pd.read_parquet(f)
-            if len(tmp):
-                dfs.append(tmp)
+            pf = pq.ParquetFile(file_path)
+            for batch in pf.iter_batches(batch_size=batch_rows, columns=columns):
+                yield batch.to_pandas()
         except Exception:
             continue
-    if not dfs:
-        return pd.DataFrame()
-    return pd.concat(dfs, ignore_index=True)
+
+
+def iter_ticks_batches(
+    data_dir: Path | str = DEFAULT_DATA_DIR,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    venues: list[str] | None = None,
+    columns: list[str] | None = None,
+    batch_rows: int = PARQUET_BATCH_ROWS,
+) -> Iterable[pd.DataFrame]:
+    selected = columns or ["ts_ms", "price", "qty", "side", "venue"]
+    files = _files_for_date_range(Path(data_dir) / "ticks", date_from=date_from, date_to=date_to)
+    venue_set = set(venues or [])
+    for batch in _iter_parquet_batches(files, columns=selected, batch_rows=batch_rows):
+        if venue_set and "venue" in batch.columns:
+            batch = batch[batch["venue"].astype(str).isin(venue_set)]
+        if not batch.empty:
+            yield batch.reset_index(drop=True)
+
+
+def iter_bbo_batches(
+    data_dir: Path | str = DEFAULT_DATA_DIR,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    venues: list[str] | None = None,
+    columns: list[str] | None = None,
+    batch_rows: int = PARQUET_BATCH_ROWS,
+) -> Iterable[pd.DataFrame]:
+    selected = columns or ["ts_ms", "bid_price", "bid_qty", "ask_price", "ask_qty", "venue"]
+    files = _files_for_date_range(Path(data_dir) / "bbo", date_from=date_from, date_to=date_to)
+    venue_set = set(venues or [])
+    for batch in _iter_parquet_batches(files, columns=selected, batch_rows=batch_rows):
+        if venue_set and "venue" in batch.columns:
+            batch = batch[batch["venue"].astype(str).isin(venue_set)]
+        if not batch.empty:
+            yield batch.reset_index(drop=True)
+
+
+def _init_tick_stats() -> dict[str, Any]:
+    return {
+        "ticks_total": 0,
+        "zero_price_ticks": 0,
+        "zero_qty_ticks": 0,
+        "side_buy_count": 0,
+        "side_sell_count": 0,
+        "price_sample": [],
+        "sample_seen": 0,
+        "last_ts": None,
+        "timeline_gaps": [],
+    }
+
+
+def _reservoir_sample(values: np.ndarray, store: list[float], *, seen: int, rng: random.Random, sample_size: int = PRICE_SAMPLE_SIZE) -> int:
+    for value in values:
+        if not np.isfinite(value):
+            continue
+        seen += 1
+        if len(store) < sample_size:
+            store.append(float(value))
+            continue
+        idx = rng.randint(1, seen)
+        if idx <= sample_size:
+            store[idx - 1] = float(value)
+    return seen
+
+
+def _scan_ticks_batched(tick_files: list[str], *, bin_size_ms: int) -> dict[str, Any]:
+    if not tick_files:
+        return {
+            "n_ticks": 0,
+            "t_start_ms": 0,
+            "t_end_ms": 0,
+            "venues": [],
+            "grouped_ticks": pd.DataFrame(columns=["venue", "bin_idx", "vwap_num", "vwap_den", "tick_count"]),
+            "venue_stats": {},
+            "timeline_gaps": [],
+        }
+
+    rng = random.Random(0)
+    venue_stats: dict[str, dict[str, Any]] = {}
+    venues_seen: set[str] = set()
+    seen_tick_rows: set[int] = set()
+    t_start_ms: int | None = None
+    t_end_ms: int | None = None
+
+    for batch in _iter_parquet_batches(tick_files, columns=["ts_ms", "price", "qty", "side", "venue"]):
+        if batch.empty:
+            continue
+        batch = batch.dropna(subset=["ts_ms", "price", "qty", "venue"]).copy()
+        if batch.empty:
+            continue
+        batch["ts_ms"] = pd.to_numeric(batch["ts_ms"], errors="coerce")
+        batch["price"] = pd.to_numeric(batch["price"], errors="coerce")
+        batch["qty"] = pd.to_numeric(batch["qty"], errors="coerce")
+        batch = batch.dropna(subset=["ts_ms", "price", "qty"])
+        if batch.empty:
+            continue
+        batch = _dedupe_tick_batch(batch, seen_tick_rows)
+        if batch.empty:
+            continue
+        batch["ts_ms"] = batch["ts_ms"].astype(np.int64)
+        batch["venue"] = batch["venue"].astype(str)
+        t_start_ms = int(batch["ts_ms"].min()) if t_start_ms is None else min(t_start_ms, int(batch["ts_ms"].min()))
+        t_end_ms = int(batch["ts_ms"].max()) if t_end_ms is None else max(t_end_ms, int(batch["ts_ms"].max()))
+
+        for venue, g in batch.groupby("venue", sort=False):
+            venues_seen.add(venue)
+            stats = venue_stats.setdefault(venue, _init_tick_stats())
+            stats["ticks_total"] += int(len(g))
+            stats["zero_price_ticks"] += int((g["price"] <= 0).sum())
+            stats["zero_qty_ticks"] += int((g["qty"] <= 0).sum())
+            side = g.get("side", pd.Series(dtype=str)).astype(str)
+            stats["side_buy_count"] += int((side == "buy").sum())
+            stats["side_sell_count"] += int((side == "sell").sum())
+            prices = g["price"].to_numpy(dtype=float, copy=False)
+            stats["sample_seen"] = _reservoir_sample(prices, stats["price_sample"], seen=stats["sample_seen"], rng=rng)
+
+            ts_sorted = np.sort(g["ts_ms"].to_numpy(dtype=np.int64, copy=False))
+            prev_ts = stats["last_ts"]
+            if prev_ts is not None and len(ts_sorted) and int(ts_sorted[0] - prev_ts) > TIMELINE_GAP_MS:
+                stats["timeline_gaps"].append({
+                    "venue": venue,
+                    "start_ms": int(prev_ts),
+                    "end_ms": int(ts_sorted[0]),
+                    "duration_s": float((int(ts_sorted[0]) - int(prev_ts)) / 1000.0),
+                })
+            if len(ts_sorted) > 1:
+                diffs = np.diff(ts_sorted)
+                gap_idx = np.where(diffs > TIMELINE_GAP_MS)[0]
+                for idx in gap_idx:
+                    stats["timeline_gaps"].append({
+                        "venue": venue,
+                        "start_ms": int(ts_sorted[idx]),
+                        "end_ms": int(ts_sorted[idx + 1]),
+                        "duration_s": float((int(ts_sorted[idx + 1]) - int(ts_sorted[idx])) / 1000.0),
+                    })
+            if len(ts_sorted):
+                stats["last_ts"] = int(ts_sorted[-1])
+
+    if t_start_ms is None or t_end_ms is None or not venues_seen:
+        return {
+            "n_ticks": 0,
+            "t_start_ms": 0,
+            "t_end_ms": 0,
+            "venues": [],
+            "grouped_ticks": pd.DataFrame(columns=["venue", "bin_idx", "vwap_num", "vwap_den", "tick_count"]),
+            "venue_stats": {},
+            "timeline_gaps": [],
+        }
+
+    grouped_parts: list[pd.DataFrame] = []
+    seen_tick_rows = set()
+    for batch in _iter_parquet_batches(tick_files, columns=["ts_ms", "price", "qty", "venue"]):
+        if batch.empty:
+            continue
+        batch = batch.dropna(subset=["ts_ms", "price", "qty", "venue"]).copy()
+        if batch.empty:
+            continue
+        batch["ts_ms"] = pd.to_numeric(batch["ts_ms"], errors="coerce")
+        batch["price"] = pd.to_numeric(batch["price"], errors="coerce")
+        batch["qty"] = pd.to_numeric(batch["qty"], errors="coerce")
+        batch = batch.dropna(subset=["ts_ms", "price", "qty"])
+        if batch.empty:
+            continue
+        batch = _dedupe_tick_batch(batch, seen_tick_rows)
+        if batch.empty:
+            continue
+        batch["ts_ms"] = batch["ts_ms"].astype(np.int64)
+        batch["venue"] = batch["venue"].astype(str)
+        batch["bin_idx"] = ((batch["ts_ms"] - t_start_ms) // bin_size_ms).astype(np.int64)
+        batch["pv"] = batch["price"] * batch["qty"]
+        grouped_parts.append(
+            batch.groupby(["venue", "bin_idx"], as_index=False)
+            .agg(vwap_num=("pv", "sum"), vwap_den=("qty", "sum"), tick_count=("price", "count"))
+        )
+
+    grouped_ticks = pd.concat(grouped_parts, ignore_index=True) if grouped_parts else pd.DataFrame(columns=["venue", "bin_idx", "vwap_num", "vwap_den", "tick_count"])
+    if not grouped_ticks.empty:
+        grouped_ticks = (
+            grouped_ticks.groupby(["venue", "bin_idx"], as_index=False)
+            .agg(vwap_num=("vwap_num", "sum"), vwap_den=("vwap_den", "sum"), tick_count=("tick_count", "sum"))
+        )
+        grouped_ticks["vwap"] = grouped_ticks["vwap_num"] / grouped_ticks["vwap_den"]
+
+    timeline_gaps = []
+    for venue in sorted(venue_stats):
+        timeline_gaps.extend(venue_stats[venue]["timeline_gaps"])
+
+    return {
+        "n_ticks": int(sum(int(v["ticks_total"]) for v in venue_stats.values())),
+        "t_start_ms": int(t_start_ms),
+        "t_end_ms": int(t_end_ms),
+        "venues": sorted(venues_seen),
+        "grouped_ticks": grouped_ticks,
+        "venue_stats": venue_stats,
+        "timeline_gaps": sorted(timeline_gaps, key=lambda row: (int(row["start_ms"]), row["venue"])),
+    }
+
+
+def _dedupe_tick_batch(batch: pd.DataFrame, seen_hashes: set[int]) -> pd.DataFrame:
+    sig = pd.util.hash_pandas_object(batch[["ts_ms", "venue", "price", "qty"]], index=False).astype("uint64")
+    mask = []
+    for value in sig.tolist():
+        key = int(value)
+        if key in seen_hashes:
+            mask.append(False)
+        else:
+            seen_hashes.add(key)
+            mask.append(True)
+    return batch.loc[mask].copy()
+
+
+def _build_vwap_from_binned_ticks(
+    grouped_ticks: pd.DataFrame,
+    venues: list[str],
+    t_start_ms: int,
+    t_end_ms: int,
+    *,
+    bin_size_ms: int,
+) -> tuple[pd.DataFrame, dict[str, float]]:
+    n_bins = int((int(t_end_ms) - int(t_start_ms)) / bin_size_ms) + 1 if t_end_ms >= t_start_ms else 0
+    grouped = grouped_ticks if grouped_ticks is not None else pd.DataFrame()
+    vwap_dict: dict[str, pd.Series] = {}
+    raw_coverage: dict[str, float] = {}
+    for venue in venues:
+        if not grouped.empty and "venue" in grouped:
+            sub = grouped[grouped["venue"] == venue][["bin_idx", "vwap"]].set_index("bin_idx")["vwap"]
+        else:
+            sub = pd.Series(dtype=float)
+        series = pd.Series(index=range(n_bins), dtype=float)
+        if len(sub):
+            series.loc[sub.index.astype(int)] = sub.values
+        vwap_dict[venue] = series.ffill()
+        raw_coverage[venue] = len(sub) / n_bins * 100 if n_bins else 0.0
+    vwap_df = pd.DataFrame(vwap_dict)
+    vwap_df.index.name = "bin_idx"
+    vwap_df["ts_ms"] = t_start_ms + vwap_df.index * bin_size_ms
+    return vwap_df, raw_coverage
+
+
+def _init_bbo_stats() -> dict[str, Any]:
+    return {"bbo_total": 0}
+
+
+def _scan_bbo_batched(bbo_files: list[str], *, bin_size_ms: int, t_start_ms: int) -> dict[str, Any]:
+    if not bbo_files:
+        return {"n_bbo": 0, "grouped_bbo": pd.DataFrame(), "venue_stats": {}}
+
+    venue_stats: dict[str, dict[str, Any]] = {}
+    grouped_parts: list[pd.DataFrame] = []
+    for batch in _iter_parquet_batches(bbo_files, columns=["ts_ms", "bid_price", "bid_qty", "ask_price", "ask_qty", "venue"]):
+        if batch.empty:
+            continue
+        batch = batch.dropna(subset=["ts_ms", "bid_price", "ask_price", "venue"]).copy()
+        if batch.empty:
+            continue
+        batch["ts_ms"] = pd.to_numeric(batch["ts_ms"], errors="coerce")
+        batch["bid_price"] = pd.to_numeric(batch["bid_price"], errors="coerce")
+        batch["ask_price"] = pd.to_numeric(batch["ask_price"], errors="coerce")
+        batch["bid_qty"] = pd.to_numeric(batch.get("bid_qty", 0.0), errors="coerce").fillna(0.0)
+        batch["ask_qty"] = pd.to_numeric(batch.get("ask_qty", 0.0), errors="coerce").fillna(0.0)
+        batch = batch.dropna(subset=["ts_ms", "bid_price", "ask_price"])
+        if batch.empty:
+            continue
+        batch["ts_ms"] = batch["ts_ms"].astype(np.int64)
+        batch["venue"] = batch["venue"].astype(str)
+        batch["bin_idx"] = ((batch["ts_ms"] - int(t_start_ms)) // bin_size_ms).astype(np.int64)
+        grouped_parts.append(
+            batch.sort_values(["venue", "bin_idx", "ts_ms"])
+            .groupby(["venue", "bin_idx"], as_index=False)
+            .tail(1)[["venue", "bin_idx", "ts_ms", "bid_price", "bid_qty", "ask_price", "ask_qty"]]
+        )
+
+    grouped_bbo = pd.concat(grouped_parts, ignore_index=True) if grouped_parts else pd.DataFrame(
+        columns=["venue", "bin_idx", "ts_ms", "bid_price", "bid_qty", "ask_price", "ask_qty"]
+    )
+    if not grouped_bbo.empty:
+        grouped_bbo = (
+            grouped_bbo.sort_values(["venue", "bin_idx", "ts_ms"])
+            .groupby(["venue", "bin_idx"], as_index=False)
+            .tail(1)
+            .reset_index(drop=True)
+        )
+
+    for batch in _iter_parquet_batches(bbo_files, columns=["ts_ms", "bid_price", "ask_price", "venue"]):
+        if batch.empty:
+            continue
+        batch = batch.dropna(subset=["ts_ms", "bid_price", "ask_price", "venue"]).copy()
+        if batch.empty:
+            continue
+        batch["venue"] = batch["venue"].astype(str)
+        for venue, g in batch.groupby("venue", sort=False):
+            stats = venue_stats.setdefault(venue, _init_bbo_stats())
+            stats["bbo_total"] += int(len(g))
+
+    return {
+        "n_bbo": int(sum(int(v["bbo_total"]) for v in venue_stats.values())),
+        "grouped_bbo": grouped_bbo,
+        "venue_stats": venue_stats,
+    }
 
 
 def _files_for(path_or_glob: str | list[str] | None) -> list[str]:
@@ -687,6 +1042,28 @@ def _files_for(path_or_glob: str | list[str] | None) -> list[str]:
             files.extend(_expand_paths(p))
         return sorted(set(files))
     return _expand_paths(path_or_glob)
+
+
+def _files_for_date_range(root: Path, *, date_from: str | None = None, date_to: str | None = None) -> list[str]:
+    if not root.is_dir():
+        return []
+    from_date = pd.Timestamp(date_from).date() if date_from else None
+    to_date = pd.Timestamp(date_to).date() if date_to else None
+    files: list[str] = []
+    for day_dir in sorted(root.iterdir()):
+        if not day_dir.is_dir():
+            continue
+        try:
+            day = pd.Timestamp(day_dir.name).date()
+        except Exception:
+            files.extend(str(p) for p in sorted(day_dir.rglob("*.parquet")))
+            continue
+        if from_date and day < from_date:
+            continue
+        if to_date and day >= to_date:
+            continue
+        files.extend(str(p) for p in sorted(day_dir.rglob("*.parquet")))
+    return files
 
 
 def _expand_paths(pattern: str) -> list[str]:
@@ -973,6 +1350,95 @@ def _build_quality(
         "sigma_per_venue": sigma,
         "venues": venues_quality,
         "timeline_gaps": timeline_gaps,
+    }
+
+
+def _build_quality_from_scans(
+    tick_scan: dict[str, Any],
+    bbo_scan: dict[str, Any],
+    venues: list[str],
+    leaders: list[str],
+    coverage: dict[str, float],
+    sigma: dict[str, float],
+    duration_s: float,
+    bin_size_ms: int,
+) -> dict:
+    from leadlag.venues import BBO_UNAVAILABLE_VENUES, REGISTRY
+
+    venue_stats = tick_scan.get("venue_stats", {})
+    grouped_bbo = bbo_scan.get("grouped_bbo", pd.DataFrame())
+    bbo_stats_by_venue = bbo_scan.get("venue_stats", {})
+    grouped_ticks = tick_scan.get("grouped_ticks", pd.DataFrame())
+
+    leader_samples: list[float] = []
+    for leader in leaders:
+        leader_samples.extend(list(venue_stats.get(leader, {}).get("price_sample", [])))
+    leader_median = float(np.median(leader_samples)) if leader_samples else None
+
+    venues_quality = {}
+    for venue in venues:
+        stats = venue_stats.get(venue, _init_tick_stats())
+        ticks_total = int(stats.get("ticks_total", 0))
+        bbo = grouped_bbo[grouped_bbo["venue"] == venue] if not grouped_bbo.empty and "venue" in grouped_bbo else pd.DataFrame()
+        bbo_total = int(bbo_stats_by_venue.get(venue, {}).get("bbo_total", 0))
+        cfg = REGISTRY.get(venue)
+
+        if not grouped_ticks.empty:
+            bin_counts = grouped_ticks[grouped_ticks["venue"] == venue]["tick_count"]
+        else:
+            bin_counts = pd.Series(dtype=float)
+        ticks_per_s_max = float((bin_counts.max() / (bin_size_ms / 1000.0))) if len(bin_counts) else 0.0
+        ticks_per_s_min = float((bin_counts.min() / (bin_size_ms / 1000.0))) if len(bin_counts) else 0.0
+
+        sample = stats.get("price_sample", [])
+        median_price = float(np.median(sample)) if sample else None
+        dev = ((median_price - leader_median) / leader_median * 1e4) if median_price and leader_median else None
+        side_buy_pct = (float(stats["side_buy_count"]) / ticks_total) if ticks_total else None
+        side_sell_pct = (float(stats["side_sell_count"]) / ticks_total) if ticks_total else None
+        gaps = list(stats.get("timeline_gaps", []))
+        downtime_s = float(sum(g["duration_s"] for g in gaps))
+        bbo_stats = _bbo_quality_stats(bbo)
+        flag, reasons = _quality_flag(
+            ticks_total=ticks_total,
+            ticks_per_s=(ticks_total / duration_s if duration_s else 0.0),
+            coverage_pct=float(coverage.get(venue, 0.0)),
+            price_dev=dev,
+        )
+
+        venues_quality[venue] = {
+            "role": cfg.role if cfg else ("leader" if venue in leaders else "follower"),
+            "ticks_total": ticks_total,
+            "ticks_per_s_avg": float(ticks_total / duration_s) if duration_s else 0.0,
+            "ticks_per_s_max": ticks_per_s_max,
+            "ticks_per_s_min_nonzero": ticks_per_s_min,
+            "bin_coverage_pct": float(coverage.get(venue, 0.0)),
+            "bbo_total": bbo_total,
+            "bbo_per_s_avg": float(bbo_total / duration_s) if duration_s else 0.0,
+            "bbo_coverage_pct": bbo_stats.pop("bbo_coverage_pct"),
+            "bbo_available": bool(venue not in BBO_UNAVAILABLE_VENUES and bbo_total > 0),
+            "median_price": median_price,
+            "price_deviation_from_leader_bps": dev,
+            "reconnects": 0,
+            "downtime_s": downtime_s,
+            "uptime_pct": max(0.0, 100.0 - (downtime_s / duration_s * 100.0)) if duration_s else 0.0,
+            "zero_price_ticks": int(stats.get("zero_price_ticks", 0)),
+            "zero_qty_ticks": int(stats.get("zero_qty_ticks", 0)),
+            "side_buy_pct": side_buy_pct,
+            "side_sell_pct": side_sell_pct,
+            "flag": flag,
+            "flag_reasons": reasons,
+            "sigma": sigma.get(venue),
+            **bbo_stats,
+        }
+
+    return {
+        "duration_s": duration_s,
+        "t_start_ms": int(tick_scan.get("t_start_ms", 0)),
+        "t_end_ms": int(tick_scan.get("t_end_ms", 0)),
+        "coverage_pct": coverage,
+        "sigma_per_venue": sigma,
+        "venues": venues_quality,
+        "timeline_gaps": tick_scan.get("timeline_gaps", []),
     }
 
 

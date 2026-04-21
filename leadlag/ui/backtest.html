@@ -12,6 +12,7 @@
 <nav>
   <a href="dashboard.html">Dashboard</a>
   <a href="collector.html">Collector</a>
+  <a href="recordings.html">Recordings</a>
   <a href="explorer.html">Explorer</a>
   <a href="quality.html">Quality</a>
   <a href="strategy.html">Strategies</a>
@@ -34,8 +35,9 @@
 <section id="detail" hidden>
   <div class="toolbar">
     <a id="mcLink" class="button-link" href="#">Run Monte Carlo</a>
-    <a id="sessionLink" class="button-link" href="#">Open Session in Explorer</a>
+    <a id="sessionLink" class="button-link" href="#">Open Analysis in Explorer</a>
     <button id="exportJson">Export JSON</button>
+    <button id="deleteBtn" style="color:#f85149" hidden>Delete</button>
     <span id="status" class="muted">Loading...</span>
   </div>
   <h2 id="title"></h2>
@@ -188,9 +190,15 @@ async function showList() {
 }
 
 function renderHeader() {
-  document.getElementById("title").textContent = `${meta.strategy_name || btId} on ${meta.session_id || "session"}`;
+  document.getElementById("title").textContent = `${meta.strategy_name || btId} on ${meta.session_id || "analysis"}`;
   document.getElementById("mcLink").href = `montecarlo.html?backtest=${btId}`;
   document.getElementById("sessionLink").href = `explorer.html?session=${meta.session_id || ""}`;
+  document.getElementById("deleteBtn").hidden = false;
+  document.getElementById("deleteBtn").onclick = async () => {
+    if (!confirm(`Delete backtest "${btId}"? Monte Carlo results also removed.`)) return;
+    await apiFetch(`/api/backtests/${btId}`, { method: "DELETE" });
+    location.href = "backtest.html";
+  };
   document.getElementById("exportJson").onclick = () => {
     const blob = new Blob([JSON.stringify({ meta, stats, equity, trades }, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
