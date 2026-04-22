@@ -28,7 +28,7 @@ const analysisPollers = new Map();
 async function loadAll() {
   const [rawRecordings, rawSessions] = await Promise.all([
     fetchJSON("/api/collections"),
-    fetchJSON("/api/sessions"),
+    fetchJSON("/api/analyses"),
   ]);
   recordings = rawRecordings;
   sessions = rawSessions;
@@ -91,12 +91,36 @@ function renderRecordings() {
         const tdActions = el("td");
         tdActions.style.whiteSpace = "nowrap";
         tdActions.innerHTML = `
-          <a href="quality.html?session=${a.id}" class="button-link">Quality</a>
-          <a href="explorer.html?session=${a.id}" class="button-link" style="margin-left:4px">Explore</a>
+          <a href="quality.html?analysis=${a.id}" class="button-link">Quality</a>
+          <a href="explorer.html?analysis=${a.id}" class="button-link" style="margin-left:4px">Explore</a>
+          <button class="button-danger button-compact" style="margin-left:4px" data-analysis-delete="${a.id}">Delete</button>
         `;
         tr.innerHTML = `<td>${a.id}</td><td>${a.date || "—"}</td><td>${a.n_events || 0}</td><td>${a.n_signal_a || 0}/${a.n_signal_b || 0}/${a.n_signal_c || 0}</td><td>${a.n_venues || 0}</td>`;
         tr.appendChild(tdActions);
+        tdActions.querySelector(`[data-analysis-delete="${a.id}"]`).onclick = () => toggleDeleteAnalysis(a.id);
         table.querySelector("tbody").appendChild(tr);
+
+        const confirmTr = el("tr", {
+          id: `deleteAnalysisRow-${a.id}`,
+          style: "display:none",
+        });
+        const confirmTd = el("td", {
+          colspan: 6,
+        });
+        confirmTd.innerHTML = `
+          <div class="banner" style="margin:6px 0 0 0">
+            <div>Delete analysis "${a.id}"?</div>
+            <div class="muted">This also removes related backtests and Monte Carlo results. Recording stays.</div>
+            <div class="action-group" style="margin-top:8px">
+              <button class="button-danger" data-analysis-confirm="${a.id}">Confirm Delete</button>
+              <button class="button-secondary" data-analysis-cancel="${a.id}">Cancel</button>
+            </div>
+          </div>
+        `;
+        confirmTd.querySelector(`[data-analysis-confirm="${a.id}"]`).onclick = () => confirmDeleteAnalysis(a.id);
+        confirmTd.querySelector(`[data-analysis-cancel="${a.id}"]`).onclick = () => toggleDeleteAnalysis(a.id);
+        confirmTr.appendChild(confirmTd);
+        table.querySelector("tbody").appendChild(confirmTr);
       });
       div.appendChild(table);
     }
@@ -184,20 +208,20 @@ function renderRecordings() {
       try {
         const res = await postJSON(`/api/collections/${rec.id}/analyze`, { params });
         if (res.will_overwrite) {
-          resultNode.textContent = `Updating existing analysis ${res.session_id}…`;
+          resultNode.textContent = `Updating existing analysis ${res.analysis_id}…`;
         }
         await pollAnalysisJob({
           jobId: res.job_id,
-          sessionId: res.session_id,
+          analysisId: res.analysis_id,
           resultNode,
           progressFill,
           progressText,
           onComplete: async (job) => {
-            resultNode.innerHTML = `<a href="quality.html?session=${job.session_id}">${job.session_id}</a> — ${job.n_events || 0} events`;
+            resultNode.innerHTML = `<a href="quality.html?analysis=${job.analysis_id}">${job.analysis_id}</a> — ${job.events_count || job.n_events || 0} events`;
             progressText.textContent = "Analysis ready. Opening quality page…";
             progressFill.style.width = "100%";
             await loadAll();
-            window.location.href = `quality.html?session=${encodeURIComponent(job.session_id)}`;
+            window.location.href = `quality.html?analysis=${encodeURIComponent(job.analysis_id)}`;
           },
         });
       } catch (err) {
@@ -225,6 +249,12 @@ function toggleDeleteRecording(recId) {
   box.style.display = box.style.display === "none" ? "" : "none";
 }
 
+function toggleDeleteAnalysis(analysisId) {
+  const row = document.getElementById(`deleteAnalysisRow-${analysisId}`);
+  if (!row) return;
+  row.style.display = row.style.display === "none" ? "" : "none";
+}
+
 async function confirmDeleteRecording(recId) {
   const statusNode = document.getElementById("status");
   statusNode.textContent = `Deleting ${recId}…`;
@@ -240,6 +270,23 @@ async function confirmDeleteRecording(recId) {
     if (qs("id") === recId) {
       window.location.href = "recordings.html";
     }
+  } catch (err) {
+    statusNode.innerHTML = `<div class="error">Delete failed: ${err.message || err}</div>`;
+  }
+}
+
+async function confirmDeleteAnalysis(analysisId) {
+  const statusNode = document.getElementById("status");
+  statusNode.textContent = `Deleting analysis ${analysisId}…`;
+  try {
+    const res = await apiFetch(`/api/analyses/${analysisId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `DELETE failed with ${res.status}`);
+    }
+    await loadAll();
+    if (typeof refreshSidebar === "function") refreshSidebar(true);
+    statusNode.textContent = `Deleted analysis ${analysisId}.`;
   } catch (err) {
     statusNode.innerHTML = `<div class="error">Delete failed: ${err.message || err}</div>`;
   }

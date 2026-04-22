@@ -217,10 +217,10 @@ if (entityParam) {
 ### Содержимое по страницам
 
 ```
-quality.html?session=X
+quality.html?analysis=X
   "Analysis · Apr 19, 2026 · 165 events · 4.0h"   [Delete Analysis] [→ Explore Events]
 
-explorer.html?session=X
+explorer.html?analysis=X
   "Analysis · Apr 19, 2026 · 165 events"           [Delete Analysis]
 
 backtest.html?id=X
@@ -280,7 +280,7 @@ trade.html?id=X
 | **T10**: нет [→ Start Paper] в MC | montecarlo.html | добавить кнопку → paper.html?strategy=X |
 | **T11**: нет hint в MC low confidence | montecarlo.html | "Refine strategy [→ Jupyter ↗]" + "Run on more data [→ Recordings]" |
 | **T15**: delete strategy, paper running | app.py + danger strip | API 409 Conflict + "Stop paper trading first →" |
-| **T16**: нет auto-navigate после create analysis | recordings.html JS | после успешного POST → navigate quality.html?session=X |
+| **T16**: нет auto-navigate после create analysis | recordings.html JS | после успешного POST → navigate quality.html?analysis=X |
 | **T5**: нет стратегий в Run Backtest | explorer.html | "No strategies yet — Open Jupyter ↗" вместо пустого radio |
 | **T6**: 30с задержка новой стратегии | sidebar.js | [↺ Refresh] кнопка в sidebar header |
 
@@ -423,7 +423,7 @@ sidebar.js
 const [collections, sessions, strategies, backtests, papers, notebooks, collStatus, paperStatus] =
   await Promise.allSettled([
     fetchJSON('/api/collections'),
-    fetchJSON('/api/sessions'),
+    fetchJSON('/api/analyses'),
     fetchJSON('/api/strategies'),
     fetchJSON('/api/backtests'),
     fetchJSON('/api/paper/strategies'),
@@ -442,7 +442,7 @@ function handleDelete(type, id) {
   // Не удаляем из sidebar — навигируем в content area с флагом
   const routes = {
     recording:  `recordings.html?id=${id}&confirm_delete=1`,
-    analysis:   `quality.html?session=${id}&confirm_delete=1`,
+    analysis:   `quality.html?analysis=${id}&confirm_delete=1`,
     strategy:   `strategy.html?strategy=${id}&confirm_delete=1`,
   };
   location.href = routes[type];
@@ -514,7 +514,7 @@ location.href = 'strategy.html';
 | Страница | Что упрощается |
 |---|---|
 | **recordings.html** | Убирается список recordings (теперь в sidebar). Остаётся как "Recording Detail" — детали + create analysis inline |
-| **quality.html** | Убирается session-picker dropdown (sidebar навигирует сразу на `quality.html?session=X`) |
+| **quality.html** | Убирается analysis-picker dropdown (sidebar навигирует сразу на `quality.html?analysis=X`) |
 | **explorer.html** | Убирается session-picker dropdown (аналогично) |
 | **strategy.html** | Убирается strategy-picker dropdown если был. Sidebar подсвечивает активную стратегию |
 | **backtest.html** | Убирается backtest-picker если был |
@@ -533,7 +533,7 @@ DELETE /api/collections/{id}          # delete recording → cascade
 PATCH  /api/venues/{name}             # enable/disable venue (collector.html)
 ```
 
-Sidebar читает `/api/collections`, `/api/sessions`, `/api/strategies`, `/api/backtests`, `/api/paper/strategies` — все уже существуют.
+Sidebar читает `/api/collections`, `/api/analyses`, `/api/strategies`, `/api/backtests`, `/api/paper/strategies` — все уже существуют.
 
 ---
 

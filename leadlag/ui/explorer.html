@@ -107,24 +107,24 @@ const mode = qs("mode") || "event";
 const btParam = qs("backtest");
 const tradeParam = qs("trade");
 
-function selectedSession() {
-  return qs("session");
+function selectedAnalysis() {
+  return qs("analysis");
 }
 
 async function initExplorer() {
-  const sid = qs("session");
-  if (!sid) {
+  const analysisId = selectedAnalysis();
+  if (!analysisId) {
     document.getElementById("status").textContent = "Select an Analysis from the sidebar [E] to explore events.";
     return;
   }
-  await loadSession(sid);
+  await loadAnalysis(analysisId);
 }
 
-async function loadSession(sessionId) {
+async function loadAnalysis(analysisId) {
   document.getElementById("status").textContent = "Loading events...";
-  meta = await fetchJSON(`/api/sessions/${sessionId}/meta`);
-  allEvents = await fetchJSON(`/api/sessions/${sessionId}/events`);
-  renderPageTitle(sessionId);
+  meta = await fetchJSON(`/api/analyses/${analysisId}/meta`);
+  allEvents = await fetchJSON(`/api/analyses/${analysisId}/events`);
+  renderPageTitle(analysisId);
   fillFollowerOptions();
   if (mode === "trade" && btParam && tradeParam !== null) {
     tradeDetail = await fetchJSON(`/api/backtests/${btParam}/trade/${tradeParam}`);
@@ -184,8 +184,8 @@ function renderEventsTable() {
   document.getElementById("summary").textContent = `Showing ${nFiltered} of ${nAll} events`;
   const statusEl = document.getElementById("status");
   if (nAll === 0) {
-    const sid = selectedSession();
-    const recId = sid ? sid.split("_").slice(0, 3).join("_") : "";
+    const analysisId = selectedAnalysis();
+    const recId = analysisId ? analysisId.split("_").slice(0, 3).join("_") : "";
     statusEl.innerHTML = `⚠ No events detected with current threshold. ` +
       `<a href="recordings.html?id=${encodeURIComponent(recId)}&action=analyze">Try lower threshold → Re-analyze</a> &nbsp; ` +
       `<a href="collector.html">Collect more data →</a>`;
@@ -234,13 +234,13 @@ async function selectEvent(binIdx) {
   selectedBin = Number(binIdx);
   selectedEvent = allEvents.find(e => Number(e.bin_idx) === selectedBin);
   if (!selectedEvent) return;
-  setQS({ session: selectedSession(), event: selectedBin, mode: mode === "trade" ? "trade" : null, backtest: btParam, trade: tradeParam });
+  setQS({ analysis: selectedAnalysis(), event: selectedBin, mode: mode === "trade" ? "trade" : null, backtest: btParam, trade: tradeParam });
   renderEventsTable();
   document.getElementById("eventTitle").textContent =
     `${selectedEvent.signal} ${Number(selectedEvent.direction) > 0 ? "UP" : "DOWN"} ` +
     `${fmt(Number(selectedEvent.magnitude_sigma), 2)}σ at ${utc(selectedEvent.ts_ms)} ` +
     `leader ${selectedEvent.anchor_leader || selectedEvent.leader}`;
-  selectedDetail = await fetchJSON(`/api/sessions/${selectedSession()}/event/${selectedBin}`);
+  selectedDetail = await fetchJSON(`/api/analyses/${selectedAnalysis()}/event/${selectedBin}`);
   renderChart();
   renderFollowersTable();
   renderDecisionStrip();
@@ -478,8 +478,8 @@ function renderDecisionStrip() {
   const bboOk = (meta.bbo_available || {})[follower];
   document.getElementById("dsBbo").textContent = bboOk ? "BBO: available" : "BBO: not available";
   document.getElementById("dsBbo").className = bboOk ? "ok" : "ping-warn hint";
-  const sessionId = selectedSession();
-  const stratParams = new URLSearchParams({ session: sessionId, follower }).toString();
+  const analysisId = selectedAnalysis();
+  const stratParams = new URLSearchParams({ analysis: analysisId, follower }).toString();
   document.getElementById("dsStrategy").href = `strategy.html?${stratParams}`;
 }
 
@@ -540,7 +540,7 @@ async function loadExplorerStrategies() {
   }
   const box = document.getElementById("strategyList");
   const valid = explorerStrategies.filter(s => s.valid);
-  if (!selectedSession()) {
+  if (!selectedAnalysis()) {
     document.getElementById("runBacktestSection").hidden = true;
     return;
   }
@@ -555,7 +555,7 @@ async function loadExplorerStrategies() {
   if (explorerBacktestStatus.running) {
     const parts = ["Backtest running"];
     if (explorerBacktestStatus.strategy_name) parts.push(explorerBacktestStatus.strategy_name);
-    if (explorerBacktestStatus.session_id) parts.push(explorerBacktestStatus.session_id);
+    if (explorerBacktestStatus.analysis_id) parts.push(explorerBacktestStatus.analysis_id);
     document.getElementById("btRunResult").textContent = parts.join(" · ");
   } else if (explorerBacktestJobId) {
     document.getElementById("btRunResult").textContent = `Queued: ${explorerBacktestJobId}`;
@@ -596,9 +596,9 @@ document.getElementById("btRunBtn").onclick = async () => {
   if (explorerBacktestStatus.running) {
     return;
   }
-  const sessionId = selectedSession();
+  const sessionId = selectedAnalysis();
   const raw = document.getElementById("btOverride").value.trim();
-  const body = { strategy_name: selectedBtStrategy, session_id: sessionId };
+  const body = { strategy_name: selectedBtStrategy, analysis_id: sessionId };
   const progressBox = document.getElementById("btRunProgress");
   const progressFill = document.getElementById("btRunProgressFill");
   const progressText = document.getElementById("btRunProgressText");

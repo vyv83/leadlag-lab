@@ -6,8 +6,8 @@ UI = Path(__file__).resolve().parents[1] / "leadlag" / "ui"
 
 def test_explorer_implements_lazy_bbo_and_trade_mode_contract():
     html = (UI / "explorer.html").read_text()
-    assert "/api/sessions/${sessionId}/events" in html
-    assert "/api/sessions/${selectedSession()}/event/${selectedBin}" in html
+    assert "/api/analyses/${analysisId}/events" in html
+    assert "/api/analyses/${selectedAnalysis()}/event/${selectedBin}" in html
     assert "Show BBO Overlay" in html
     assert "BBO not available for" in html
     assert "bbo_window" in html

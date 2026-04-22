@@ -1,4 +1,4 @@
-"""Lightweight artifact contract validation for sessions and backtests."""
+"""Lightweight artifact contract validation for analyses and backtests."""
 from __future__ import annotations
 
 import json
@@ -15,9 +15,9 @@ class ContractError(ValueError):
     """Raised when an on-disk artifact does not satisfy the public contract."""
 
 
-SESSION_META_REQUIRED = {
-    "session_id",
-    "collection_session_id",
+ANALYSIS_META_REQUIRED = {
+    "analysis_id",
+    "recording_id",
     "params_hash",
     "collection_files",
     "t_start_ms",
@@ -68,7 +68,7 @@ BACKTEST_META_REQUIRED = {
     "strategy_description",
     "strategy_params",
     "params_override",
-    "session_id",
+    "analysis_id",
     "backtest_date_utc",
     "computation_time_s",
     "slippage_model",
@@ -198,14 +198,14 @@ def _require_keys(name: str, obj: dict, required: set[str]) -> None:
         raise ContractError(f"{name} missing required keys: {', '.join(missing)}")
 
 
-def validate_session_payload(
+def validate_analysis_payload(
     meta: dict,
     events: list[dict],
     price_windows: list[dict],
     bbo_windows: list[dict],
     quality: dict,
 ) -> None:
-    _require_keys("meta.json", meta, SESSION_META_REQUIRED)
+    _require_keys("meta.json", meta, ANALYSIS_META_REQUIRED)
     if not isinstance(events, list):
         raise ContractError("events.json must be a list")
     for i, event in enumerate(events):
@@ -236,11 +236,11 @@ def validate_backtest_payload(
     _require_keys("stats.json", stats, STATS_REQUIRED)
 
 
-def validate_session_artifacts(root: Path) -> None:
+def validate_analysis_artifacts(root: Path) -> None:
     for name in ("meta.json", "events.json", "price_windows.json", "bbo_windows.json", "quality.json"):
         if not (root / name).exists():
-            raise ContractError(f"missing session artifact: {root / name}")
-    validate_session_payload(
+            raise ContractError(f"missing analysis artifact: {root / name}")
+    validate_analysis_payload(
         read_json(root / "meta.json"),
         read_json(root / "events.json"),
         read_json(root / "price_windows.json"),

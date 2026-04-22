@@ -46,7 +46,7 @@
 
     const endpoints = [
       { key: "collections", url: "/api/collections" },
-      { key: "sessions", url: "/api/sessions" },
+      { key: "sessions", url: "/api/analyses" },
       { key: "strategies", url: "/api/strategies" },
       { key: "backtests", url: "/api/backtests" },
       { key: "backtestStatus", url: "/api/backtests/status" },
@@ -153,7 +153,7 @@
     const page = location.pathname.split("/").pop().replace(".html", "");
     return {
       page,
-      session: qs("session"),
+      analysis: qs("analysis"),
       id: qs("id"),
       strategy: qs("strategy"),
       backtest: qs("backtest"),
@@ -245,7 +245,7 @@
 
     const metaParts = [];
     if (status?.strategy_name) metaParts.push(status.strategy_name);
-    if (status?.session_id) metaParts.push(shortDateFromId(status.session_id) || status.session_id);
+    if (status?.analysis_id) metaParts.push(shortDateFromId(status.analysis_id) || status.analysis_id);
     if (metaParts.length) {
       wrap.appendChild(el("div", { className: "sb-job-meta" }, [metaParts.join(" · ")]));
     }
@@ -345,14 +345,14 @@
       analyses.forEach(session => {
         const sid = session.id;
         const anaRow = el("div", { className: "sb-item sb-i1" });
-        anaRow.appendChild(el("a", { href: `quality.html?session=${encodeURIComponent(sid)}`, title: sid },
+        anaRow.appendChild(el("a", { href: `quality.html?analysis=${encodeURIComponent(sid)}`, title: sid },
           [sessionLabel(session)]));
-        if ((active.page === "explorer" || active.page === "quality") && active.session === sid) {
+        if ((active.page === "explorer" || active.page === "quality") && active.analysis === sid) {
           anaRow.classList.add("active");
         }
         anaRow.appendChild(el("a", {
           className: "sb-ql sb-ql-e",
-          href: `explorer.html?session=${encodeURIComponent(sid)}`,
+          href: `explorer.html?analysis=${encodeURIComponent(sid)}`,
           title: "Open Explorer",
         }, ["exp"]));
         container.appendChild(anaRow);

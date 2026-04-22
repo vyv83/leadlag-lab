@@ -25,14 +25,14 @@
 
 ## Архитектурные решения
 
-### 1. Переименование терминологии (UI only, API не меняем)
+### 1. Переименование терминологии (единый публичный контракт)
 
 | Было (в коде / UI) | Стало (в UI) | Почему |
 |---|---|---|
 | Collection | **Recording** | Это то что collector записал — raw data |
 | Session | **Analysis** | Это результат обработки recording — detected events |
 
-Переименование только в HTML-лейблах, API остаётся `/api/collections`, `/api/sessions`.
+Публичный контракт использует `/api/collections`, `/api/analyses`. Старый `/api/sessions` не является частью актуальной системы.
 
 ### 2. Модель сущностей и связей
 
@@ -40,7 +40,7 @@
 Venue (config.py, enabled/disabled)
     │
     └──► Collector (process: start/stop)
-              │ пишет rotating parquet bins (каждые rotation_s сек)
+              │ пишет rotating raw parquet files (ticks/BBO, каждые rotation_s сек)
               ▼
          Recording (raw files, auto-grouped по временному gap < 45 мин)
               │  analyze() с параметрами (threshold_sigma, bin_size_ms...)

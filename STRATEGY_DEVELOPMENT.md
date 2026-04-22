@@ -96,14 +96,14 @@ from pathlib import Path
 import os
 import numpy as np
 import pandas as pd
-from leadlag import list_sessions, load_session, Strategy, Order, Context, Event, BboSnapshot
+from leadlag import list_analyses, load_analysis, Strategy, Order, Context, Event, BboSnapshot
 
 DATA = '../data'
-sessions = list_sessions(DATA)
-session = load_session(sessions[0]['id'], data_dir=DATA)
-events = session.events.filter(signal='C')
+analyses = list_analyses(DATA)
+analysis = load_analysis(analyses[0]['id'], data_dir=DATA)
+events = analysis.events.filter(signal='C')
 
-print(f"Загружена: {session.session_id}")
+print(f"Загружена: {analysis.analysis_id}")
 print(f"События: {events.count}")
 ```
 

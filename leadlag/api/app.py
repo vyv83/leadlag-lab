@@ -1,7 +1,7 @@
 """FastAPI application for leadlag-platform.
 
 Exposes the read-only endpoints needed by the HTML UIs under `leadlag/ui/`:
-    sessions, strategies, backtests (+ run).
+    analyses, strategies, backtests (+ run).
 
 System / collector / paper endpoints belong to Phase 4/5 and are not yet wired.
 
@@ -25,11 +25,11 @@ from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from leadlag import load_session, load_strategy, run_backtest, list_sessions as core_list_sessions, run_monte_carlo
+from leadlag import load_analysis, load_strategy, run_backtest, list_analyses as core_list_analyses, run_monte_carlo
 from leadlag.backtest import BacktestResult
 from leadlag.collections import get_collection, list_collections
 from leadlag.contracts import ContractError, read_json
-from leadlag.session import Session, make_session_id
+from leadlag.session import Analysis, make_analysis_id
 from leadlag.monitor import system_stats, read_history, read_pings, list_data_files, read_collector_log, system_processes
 from leadlag.monitor.snapshot import read_collector_status
 from leadlag.venues import REGISTRY
@@ -62,11 +62,12 @@ if UI_DIR.exists():
     app.mount("/ui", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
 
 
-# ─── sessions ───
+# ─── analyses ───
 
-@app.get("/api/sessions")
-def list_sessions():
-    return core_list_sessions(DATA_DIR)
+
+@app.get("/api/analyses")
+def list_analyses():
+    return [_public_analysis_row(row) for row in core_list_analyses(DATA_DIR)]
 
 
 @app.get("/api/collections")
@@ -130,14 +131,14 @@ def _pid_alive(pid: Any) -> bool:
     return True
 
 
-def _acquire_backtest_slot(strategy_name: str, session_id: str, data_dir: Path | str = DATA_DIR) -> dict:
+def _acquire_backtest_slot(strategy_name: str, analysis_id: str, data_dir: Path | str = DATA_DIR) -> dict:
     """Allow only one backtest worker at a time on this server."""
     now_ms = int(time.time() * 1000)
     payload = {
         "running": True,
         "status": "starting",
         "strategy_name": strategy_name,
-        "session_id": session_id,
+        "analysis_id": analysis_id,
         "request_pid": os.getpid(),
         "worker_pid": None,
         "started_at_ms": now_ms,
@@ -204,7 +205,7 @@ def backtest_status():
     if worker_pid and not _pid_alive(worker_pid):
         _release_backtest_slot(DATA_DIR)
         return {"running": False, "stale": True}
-    return current
+    return _public_payload(current)
 
 
 @app.get("/api/backtest-jobs/{job_id}")
@@ -212,7 +213,7 @@ def backtest_job_status(job_id: str):
     path = _backtest_job_path(DATA_DIR, job_id)
     if not path.exists():
         raise HTTPException(404, {"error": "backtest_job_not_found", "job_id": job_id})
-    return json.loads(path.read_text())
+    return _public_payload(json.loads(path.read_text()))
 
 
 def _normalize_analysis_params(body: dict | None) -> dict:
@@ -229,6 +230,20 @@ def _normalize_analysis_params(body: dict | None) -> dict:
     }
 
 
+def _public_payload(payload: dict) -> dict:
+    out = dict(payload)
+    if "collection_id" in out:
+        out["recording_id"] = out["collection_id"]
+    return out
+
+
+def _public_analysis_row(row: dict) -> dict:
+    out = _public_payload(row)
+    if "id" in out and "analysis_id" not in out:
+        out["analysis_id"] = out["id"]
+    return out
+
+
 def _analyze_worker(job_path: str, job_id: str, collection_id: str, tick_files: list, bbo_files: list, params: dict, data_dir: str) -> dict:
     """Runs in a subprocess so OOM-kill doesn't take down uvicorn."""
     from pathlib import Path
@@ -239,7 +254,7 @@ def _analyze_worker(job_path: str, job_id: str, collection_id: str, tick_files: 
         current = {
             "job_id": job_id,
             "collection_id": collection_id,
-            "session_id": make_session_id(collection_id, params),
+            "analysis_id": make_analysis_id(collection_id, params),
             "status": status,
             "stage": stage,
             "message": message,
@@ -252,7 +267,7 @@ def _analyze_worker(job_path: str, job_id: str, collection_id: str, tick_files: 
         _write_analysis_job(status_path, current)
 
     update("starting", "Worker process started", 0.01)
-    session = Session.build_from_raw(
+    analysis = Analysis.build_from_raw(
         collection_id, tick_files, bbo_files,
         bin_size_ms=params["bin_size_ms"],
         ema_span_bins=params["ema_span_bins"],
@@ -265,13 +280,13 @@ def _analyze_worker(job_path: str, job_id: str, collection_id: str, tick_files: 
         progress_callback=update,
     )
     update("saving", "Saving analysis artifacts", 0.98)
-    out = session.save(Path(data_dir))
+    out = analysis.save(Path(data_dir))
     result = {
-        "session_id": session.session_id,
-        "n_events": session.events.count,
+        "analysis_id": analysis.analysis_id,
+        "events_count": analysis.events.count,
         "path": str(out),
     }
-    update("complete", f"Analysis ready: {session.events.count} events", 1.0, status="completed", extra=result)
+    update("complete", f"Analysis ready: {analysis.events.count} events", 1.0, status="completed", extra=result)
     return result
 
 
@@ -286,14 +301,14 @@ def api_collection_analyze(collection_id: str, body: dict = Body(default_factory
         raise HTTPException(400, {"error": "collection_has_no_ticks", "collection_id": collection_id})
 
     params = _normalize_analysis_params(body)
-    session_id = make_session_id(collection_id, params)
-    will_overwrite = (DATA_DIR / "sessions" / session_id).exists()
+    analysis_id = make_analysis_id(collection_id, params)
+    will_overwrite = (DATA_DIR / "analyses" / analysis_id).exists()
     job_id = str(uuid.uuid4())
     job_path = _analysis_job_path(DATA_DIR, job_id)
     payload = {
         "job_id": job_id,
         "collection_id": collection_id,
-        "session_id": session_id,
+        "analysis_id": analysis_id,
         "status": "queued",
         "stage": "queued",
         "message": "Analysis queued",
@@ -324,7 +339,8 @@ def api_collection_analyze(collection_id: str, body: dict = Body(default_factory
         "queued": True,
         "job_id": job_id,
         "collection_id": collection_id,
-        "session_id": session_id,
+        "analysis_id": analysis_id,
+        "events_count": None,
         "will_overwrite": will_overwrite,
         "status_url": f"/api/analysis-jobs/{job_id}",
     }
@@ -337,7 +353,7 @@ def _run_analysis_job(job_path: str, job_id: str, collection_id: str, tick_files
         _write_analysis_job(Path(job_path), {
             "job_id": job_id,
             "collection_id": collection_id,
-            "session_id": make_session_id(collection_id, params),
+            "analysis_id": make_analysis_id(collection_id, params),
             "status": "failed",
             "stage": "failed",
             "message": str(e),
@@ -356,26 +372,24 @@ def api_analysis_job_status(job_id: str):
     job_path = _analysis_job_path(DATA_DIR, job_id)
     if not job_path.exists():
         raise HTTPException(404, {"error": "analysis_job_not_found", "job_id": job_id})
-    return json.loads(job_path.read_text())
+    return _public_payload(json.loads(job_path.read_text()))
 
+@app.get("/api/analyses/{analysis_id}/meta")
+def analysis_meta(analysis_id: str):
+    analysis = _load_analysis(analysis_id)
+    return _public_payload({**analysis.meta, "quality_summary": _quality_summary(analysis.quality)})
 
-@app.get("/api/sessions/{session_id}/meta")
-def session_meta(session_id: str):
-    s = _load_session(session_id)
-    return {**s.meta, "quality_summary": _quality_summary(s.quality)}
-
-
-@app.get("/api/sessions/{session_id}/events")
-def session_events(
-    session_id: str,
+@app.get("/api/analyses/{analysis_id}/events")
+def analysis_events(
+    analysis_id: str,
     signal: Optional[str] = None,
     min_mag: Optional[float] = None,
     direction: Optional[int] = None,
     follower: Optional[str] = None,
     min_lagging: Optional[int] = None,
 ):
-    s = _load_session(session_id)
-    rows = s.events.rows
+    analysis = _load_analysis(analysis_id)
+    rows = analysis.events.rows
     if signal:
         rows = [r for r in rows if r.get("signal") == signal]
     if min_mag is not None:
@@ -389,28 +403,52 @@ def session_events(
     return rows
 
 
-@app.get("/api/sessions/{session_id}/event/{bin_idx}")
-def session_event_detail(session_id: str, bin_idx: int):
-    s = _load_session(session_id)
+@app.get("/api/analyses/{analysis_id}/event/{bin_idx}")
+def analysis_event_detail(analysis_id: str, bin_idx: int):
+    analysis = _load_analysis(analysis_id)
     try:
-        return s.event_detail(bin_idx)
+        return analysis.event_detail(bin_idx)
     except KeyError:
-        raise HTTPException(404, {"error": "event_not_found", "session_id": session_id, "bin_idx": bin_idx})
+        raise HTTPException(404, {"error": "event_not_found", "analysis_id": analysis_id, "bin_idx": bin_idx})
 
 
-@app.get("/api/sessions/{session_id}/quality")
-def session_quality(session_id: str):
-    s = _load_session(session_id)
-    return {"quality": s.quality, "meta": s.meta}
+@app.get("/api/analyses/{analysis_id}/quality")
+def analysis_quality(analysis_id: str):
+    analysis = _load_analysis(analysis_id)
+    return {"quality": analysis.quality, "meta": _public_payload(analysis.meta)}
 
 
-@app.delete("/api/sessions/{session_id}")
-def delete_session(session_id: str):
-    session_dir = DATA_DIR / "sessions" / session_id
-    if not session_dir.exists():
-        raise HTTPException(404, f"session not found: {session_id}")
-    shutil.rmtree(session_dir)
-    return {"ok": True}
+def _delete_backtests_for_analysis_ids(analysis_ids: set[str]) -> int:
+    if not analysis_ids:
+        return 0
+    bt_root = DATA_DIR / "backtest"
+    if not bt_root.is_dir():
+        return 0
+    removed_backtests = 0
+    for d in list(bt_root.iterdir()):
+        if not d.is_dir():
+            continue
+        meta_p = d / "meta.json"
+        if not meta_p.exists():
+            continue
+        try:
+            meta = json.loads(meta_p.read_text())
+        except Exception:
+            continue
+        if meta.get("analysis_id") in analysis_ids:
+            shutil.rmtree(d, ignore_errors=True)
+            removed_backtests += 1
+    return removed_backtests
+
+
+@app.delete("/api/analyses/{analysis_id}")
+def delete_analysis(analysis_id: str):
+    analysis_dir = DATA_DIR / "analyses" / analysis_id
+    if not analysis_dir.exists():
+        raise HTTPException(404, f"analysis not found: {analysis_id}")
+    removed_backtests = _delete_backtests_for_analysis_ids({analysis_id})
+    shutil.rmtree(analysis_dir, ignore_errors=True)
+    return {"ok": True, "removed_backtests": removed_backtests, "analysis_id": analysis_id}
 
 
 # ─── strategies ───
@@ -574,7 +612,7 @@ def list_backtests():
         out.append({
             "id": d.name,
             "strategy": meta.get("strategy_name"),
-            "session_id": meta.get("session_id"),
+            "analysis_id": meta.get("analysis_id"),
             "created_at": meta.get("created_at"),
             "backtest_date_utc": meta.get("backtest_date_utc"),
             "strategy_version": meta.get("strategy_version"),
@@ -611,13 +649,14 @@ def backtest_artifact(bt_id: str, artifact: str):
         if artifact == "montecarlo":
             return {}
         raise HTTPException(404, f"{artifact}.json missing")
-    return json.loads(p.read_text())
+    payload = json.loads(p.read_text())
+    return _public_payload(payload) if artifact == "meta" else payload
 
 
 def _backtest_worker(
     strategy_path: str,
     strategy_name: str,
-    session_id: str,
+    analysis_id: str,
     params_override: dict | None,
     data_dir: str,
     progress_callback=None,
@@ -637,17 +676,17 @@ def _backtest_worker(
     if progress_callback:
         progress_callback("loading_session", "Loading analysis artifacts…", 0.22)
     try:
-        session = load_session(session_id, data_dir=data_dir)
+        analysis = load_analysis(analysis_id, data_dir=data_dir)
     except Exception as e:
         return {
             "ok": False,
             "status": 400,
-            "error": {"error": "session_load_failed", "type": type(e).__name__, "message": str(e)},
+            "error": {"error": "analysis_load_failed", "type": type(e).__name__, "message": str(e)},
         }
     if progress_callback:
         progress_callback("running_backtest", "Running backtest engine…", 0.55)
     try:
-        result = run_backtest(strategy, session, params_override=params_override, data_dir=data_dir)
+        result = run_backtest(strategy, analysis, params_override=params_override, data_dir=data_dir)
         if progress_callback:
             progress_callback("saving", "Saving backtest artifacts…", 0.88)
         out = result.save(data_dir=data_dir)
@@ -669,7 +708,7 @@ def _backtest_worker(
     }
 
 
-def _run_backtest_job(job_path: str, job_id: str, strategy_path: str, strategy_name: str, session_id: str, params_override: dict | None, data_dir: str) -> None:
+def _run_backtest_job(job_path: str, job_id: str, strategy_path: str, strategy_name: str, analysis_id: str, params_override: dict | None, data_dir: str) -> None:
     path = Path(job_path)
     try:
         payload = json.loads(path.read_text()) if path.exists() else {}
@@ -681,7 +720,7 @@ def _run_backtest_job(job_path: str, job_id: str, strategy_path: str, strategy_n
             **payload,
             "job_id": job_id,
             "strategy_name": strategy_name,
-            "session_id": session_id,
+            "analysis_id": analysis_id,
             "status": status,
             "message": message,
             "stage": current_stage.get("stage", payload.get("stage", "queued")),
@@ -711,13 +750,13 @@ def _run_backtest_job(job_path: str, job_id: str, strategy_path: str, strategy_n
             status="running",
             worker_pid=os.getpid(),
             strategy_name=strategy_name,
-            session_id=session_id,
+            analysis_id=analysis_id,
             job_id=job_id,
         )
         result = _backtest_worker(
             strategy_path,
             strategy_name,
-            session_id,
+            analysis_id,
             params_override,
             data_dir,
             progress_callback=update_stage,
@@ -757,11 +796,12 @@ def backtest_trade_detail(bt_id: str, trade_id: int):
         raise HTTPException(404, {"error": "trade_not_found", "backtest_id": bt_id, "trade_id": trade_id})
     meta_p = bt_root / "meta.json"
     meta = json.loads(meta_p.read_text()) if meta_p.exists() else {}
-    detail = {"trade": t, "meta": meta, "total_trades": len(trades)}
-    if meta.get("session_id") and t.get("signal_bin_idx") is not None:
+    detail = {"trade": t, "meta": _public_payload(meta), "total_trades": len(trades)}
+    analysis_id = meta.get("analysis_id")
+    if analysis_id and t.get("signal_bin_idx") is not None:
         try:
-            session = load_session(meta["session_id"], data_dir=DATA_DIR)
-            detail.update(session.event_detail(int(t["signal_bin_idx"])))
+            analysis = load_analysis(analysis_id, data_dir=DATA_DIR)
+            detail.update(analysis.event_detail(int(t["signal_bin_idx"])))
         except Exception as exc:
             detail["event_error"] = f"{type(exc).__name__}: {exc}"
     prev_ids = [int(x.get("trade_id", -1)) for x in trades if int(x.get("trade_id", -1)) < trade_id]
@@ -776,20 +816,20 @@ def backtest_run(body: dict = Body(...)):
     import multiprocessing
 
     name = body.get("strategy_name")
-    session_id = body.get("session_id")
+    analysis_id = body.get("analysis_id")
     params_override = body.get("params_override")
-    if not name or not session_id:
-        raise HTTPException(400, {"error": "missing_fields", "required": ["strategy_name", "session_id"]})
+    if not name or not analysis_id:
+        raise HTTPException(400, {"error": "missing_fields", "required": ["strategy_name", "analysis_id"]})
     strategy_path = DATA_DIR / "strategies" / f"{name}.py"
     if not strategy_path.exists():
         raise HTTPException(400, {"error": "strategy_not_found", "path": str(strategy_path)})
-    _acquire_backtest_slot(name, session_id, DATA_DIR)
+    _acquire_backtest_slot(name, analysis_id, DATA_DIR)
     job_id = str(uuid.uuid4())
     job_path = _backtest_job_path(DATA_DIR, job_id)
     _write_backtest_job(job_path, {
         "job_id": job_id,
         "strategy_name": name,
-        "session_id": session_id,
+        "analysis_id": analysis_id,
         "status": "queued",
         "stage": "queued",
         "progress": 0.02,
@@ -802,7 +842,7 @@ def backtest_run(body: dict = Body(...)):
     try:
         proc = ctx.Process(
             target=_run_backtest_job,
-            args=(str(job_path), job_id, str(strategy_path), name, session_id, params_override, str(DATA_DIR)),
+            args=(str(job_path), job_id, str(strategy_path), name, analysis_id, params_override, str(DATA_DIR)),
             daemon=True,
         )
         proc.start()
@@ -811,13 +851,14 @@ def backtest_run(body: dict = Body(...)):
             status="queued",
             worker_pid=proc.pid,
             strategy_name=name,
-            session_id=session_id,
+            analysis_id=analysis_id,
             job_id=job_id,
         )
         return {
             "ok": True,
             "queued": True,
             "job_id": job_id,
+            "analysis_id": analysis_id,
             "status_url": f"/api/backtest-jobs/{job_id}",
         }
     except Exception:
@@ -867,12 +908,12 @@ def delete_collection(collection_id: str):
         raise HTTPException(404, {"error": "collection_not_found", "collection_id": collection_id})
     removed_analyses = 0
     removed_backtests = 0
-    # find and delete related sessions/analyses
-    sessions_dir = DATA_DIR / "sessions"
+    # find and delete related analyses
+    analyses_dir = DATA_DIR / "analyses"
     exact_prefix = "_".join(collection_id.split("_")[:2])
-    related_session_ids: set[str] = set()
-    if sessions_dir.is_dir():
-        for d in list(sessions_dir.iterdir()):
+    related_analysis_ids: set[str] = set()
+    if analyses_dir.is_dir():
+        for d in list(analyses_dir.iterdir()):
             if not d.is_dir():
                 continue
             # sessions whose ID starts with the collection ID prefix
@@ -882,7 +923,7 @@ def delete_collection(collection_id: str):
                 try:
                     meta = json.loads(meta_p.read_text())
                     if meta.get("collection_id") == collection_id or d.name.startswith(exact_prefix):
-                        related_session_ids.add(d.name)
+                        related_analysis_ids.add(d.name)
                         shutil.rmtree(d, ignore_errors=True)
                         removed_analyses += 1
                         continue
@@ -890,25 +931,11 @@ def delete_collection(collection_id: str):
                     pass
             # fallback: check if session starts with collection timestamp prefix
             if d.name.startswith(exact_prefix):
-                related_session_ids.add(d.name)
+                related_analysis_ids.add(d.name)
                 shutil.rmtree(d, ignore_errors=True)
                 removed_analyses += 1
     # delete related backtests for removed analyses
-    bt_root = DATA_DIR / "backtest"
-    if bt_root.is_dir() and related_session_ids:
-        for d in list(bt_root.iterdir()):
-            if not d.is_dir():
-                continue
-            meta_p = d / "meta.json"
-            if not meta_p.exists():
-                continue
-            try:
-                meta = json.loads(meta_p.read_text())
-            except Exception:
-                continue
-            if meta.get("session_id") in related_session_ids:
-                shutil.rmtree(d, ignore_errors=True)
-                removed_backtests += 1
+    removed_backtests = _delete_backtests_for_analysis_ids(related_analysis_ids)
     # delete raw tick/bbo files for this collection
     ticks_dir = DATA_DIR / "ticks"
     bbo_dir = DATA_DIR / "bbo"
@@ -944,7 +971,7 @@ def backtest_montecarlo_run(bt_id: str, body: dict = Body(default_factory=dict))
     stats = read_json(bt_root / "stats.json") if (bt_root / "stats.json").exists() else {}
     result = BacktestResult(
         strategy_name=meta.get("strategy_name", bt_id),
-        session_id=meta.get("session_id", ""),
+        analysis_id=meta.get("analysis_id", ""),
         params=meta.get("strategy_params", meta.get("params", {})),
         trades=trades,
         equity=read_json(bt_root / "equity.json") if (bt_root / "equity.json").exists() else [],
@@ -1047,19 +1074,18 @@ def api_collector_start(body: dict = Body(...)):
         raise HTTPException(409, "collector already running")
     current = read_collector_status(DATA_DIR)
     if current.get("running_effective") and not current.get("stale"):
-        raise HTTPException(409, {"error": "collector_status_running", "session_id": current.get("session_id")})
+        raise HTTPException(409, {"error": "collector_status_running", "recording_id": current.get("recording_id")})
     duration_s = int(body.get("duration_s", 3600))
     venues = body.get("venues") or []
     rotation_s = int(body.get("rotation_s", 1800))
-    bin_size_ms = int(body.get("bin_size_ms", 50))
-    if duration_s <= 0 or rotation_s <= 0 or bin_size_ms <= 0:
-        raise HTTPException(400, {"error": "invalid_collector_params", "message": "duration_s, rotation_s and bin_size_ms must be positive"})
+    if duration_s <= 0 or rotation_s <= 0:
+        raise HTTPException(400, {"error": "invalid_collector_params", "message": "duration_s and rotation_s must be positive"})
     cmd = [sys.executable, "-m", "leadlag.collector", "--duration", str(duration_s)]
     if venues:
         cmd += ["--venues", ",".join(venues)]
-    cmd += ["--rotation-s", str(rotation_s), "--bin-size-ms", str(bin_size_ms)]
+    cmd += ["--rotation-s", str(rotation_s)]
     COLLECTOR_PROC = subprocess.Popen(cmd, cwd=str(DATA_DIR.parent.resolve()))
-    return {"ok": True, "pid": COLLECTOR_PROC.pid, "rotation_s": rotation_s, "bin_size_ms": bin_size_ms}
+    return {"ok": True, "pid": COLLECTOR_PROC.pid, "rotation_s": rotation_s}
 
 
 @app.post("/api/collector/stop")
@@ -1275,14 +1301,14 @@ def _write_json_file(path: Path, data: dict) -> None:
 
 def _public_collection(collection: dict) -> dict:
     hidden = {"tick_file_paths", "bbo_file_paths"}
-    return {k: v for k, v in collection.items() if k not in hidden}
+    return _public_payload({k: v for k, v in collection.items() if k not in hidden})
 
 
-def _load_session(session_id: str):
+def _load_analysis(analysis_id: str):
     try:
-        return load_session(session_id, data_dir=DATA_DIR)
+        return load_analysis(analysis_id, data_dir=DATA_DIR)
     except FileNotFoundError:
-        raise HTTPException(404, f"session not found: {session_id}")
+        raise HTTPException(404, f"analysis not found: {analysis_id}")
 
 
 def _quality_summary(q: dict) -> dict:

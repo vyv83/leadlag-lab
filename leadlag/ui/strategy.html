@@ -79,7 +79,7 @@ function btForStrat(name) {
 async function loadAll() {
   const [strats, sess, bts, nb, btStatus] = await Promise.all([
     fetchJSON("/api/strategies"),
-    fetchJSON("/api/sessions"),
+    fetchJSON("/api/analyses"),
     fetchJSON("/api/backtests"),
     fetchJSON("/api/notebooks").catch(() => []),
     fetchJSON("/api/backtests/status").catch(() => ({ running: false })),
@@ -97,7 +97,7 @@ function backtestStatusText() {
   if (!backtestStatus || !backtestStatus.running) return "";
   const parts = ["Backtest running"];
   if (backtestStatus.strategy_name) parts.push(backtestStatus.strategy_name);
-  if (backtestStatus.session_id) parts.push(backtestStatus.session_id);
+  if (backtestStatus.analysis_id) parts.push(backtestStatus.analysis_id);
   return parts.join(" · ");
 }
 
@@ -243,7 +243,7 @@ function describeSession(sessionId) {
     return {
       title: sessionId || "Unknown analysis",
       detail: "Analysis metadata unavailable",
-      link: sessionId ? `explorer.html?session=${encodeURIComponent(sessionId)}` : "",
+      link: sessionId ? `explorer.html?analysis=${encodeURIComponent(sessionId)}` : "",
     };
   }
   const meta = [];
@@ -253,7 +253,7 @@ function describeSession(sessionId) {
   return {
     title: `${shortMonthDate(session.date)} · ${session.id}`,
     detail: meta.join(" · "),
-    link: `explorer.html?session=${encodeURIComponent(session.id)}`,
+    link: `explorer.html?analysis=${encodeURIComponent(session.id)}`,
     session,
   };
 }
@@ -332,7 +332,7 @@ function renderSessionOption(session, selectedId) {
 async function fetchSessionMetaCached(sessionId) {
   if (!sessionId) return null;
   if (sessionMetaCache.has(sessionId)) return sessionMetaCache.get(sessionId);
-  const promise = fetchJSON(`/api/sessions/${encodeURIComponent(sessionId)}/meta`).catch(() => null);
+  const promise = fetchJSON(`/api/analyses/${encodeURIComponent(sessionId)}/meta`).catch(() => null);
   sessionMetaCache.set(sessionId, promise);
   return promise;
 }
@@ -484,8 +484,8 @@ async function renderDetail(name) {
   }
 
   const latest = btSummary(name);
-  const preferredSessionId = latest && sessions.some(s => s.id === latest.session_id)
-    ? latest.session_id
+  const preferredSessionId = latest && sessions.some(s => s.id === latest.analysis_id)
+    ? latest.analysis_id
     : (sessions[0] ? sessions[0].id : "");
   html += `<h3 style="margin-top:8px">Run Backtest</h3>`;
   html += `<div class="action-panel">`;
@@ -549,7 +549,7 @@ async function renderDetail(name) {
     html += `<h3>Backtests (${stratBts.length})</h3>`;
     html += `<div class="table-scroll strategy-results-table"><table><thead><tr><th>backtest</th><th>analysis</th><th>run setup</th><th>trades</th><th>net</th><th>avg</th><th>max DD</th><th>win</th><th>sharpe</th><th>PF</th><th>RF</th><th>MC</th><th></th></tr></thead><tbody>`;
     stratBts.forEach(b => {
-      const sessionInfo = describeSession(b.session_id);
+      const sessionInfo = describeSession(b.analysis_id);
       const mergedParams = b.params || {};
       const overrides = b.params_override || {};
       html += `<tr>`;
@@ -620,7 +620,7 @@ async function renderDetail(name) {
       return;
     }
     const sessionId = document.getElementById("detailSession").value;
-    const body = { strategy_name: name, session_id: sessionId };
+    const body = { strategy_name: name, analysis_id: sessionId };
     const progressBox = document.getElementById("detailRunProgress");
     const progressFill = document.getElementById("detailRunProgressFill");
     const progressText = document.getElementById("detailRunProgressText");

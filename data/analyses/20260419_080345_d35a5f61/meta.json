@@ -1,0 +1,144 @@
+{
+  "collection_id": "20260419_080345",
+  "params": {
+    "bin_size_ms": 30,
+    "ema_span_bins": 200,
+    "threshold_sigma": 2.0,
+    "follower_max_dev": 0.5,
+    "cluster_gap_bins": 60,
+    "detection_window_bins": 10,
+    "confirm_window_bins": 10,
+    "window_ms": 10000
+  },
+  "params_hash": "d35a5f61",
+  "collection_files": {
+    "ticks": [
+      "data/ticks/2026-04-19/ticks_20260419_080400.parquet",
+      "data/ticks/2026-04-19/ticks_20260419_083428.parquet",
+      "data/ticks/2026-04-19/ticks_20260419_090438.parquet",
+      "data/ticks/2026-04-19/ticks_20260419_093447.parquet",
+      "data/ticks/2026-04-19/ticks_20260419_100456.parquet",
+      "data/ticks/2026-04-19/ticks_20260419_103504.parquet",
+      "data/ticks/2026-04-19/ticks_20260419_110512.parquet",
+      "data/ticks/2026-04-19/ticks_20260419_113526.parquet",
+      "data/ticks/2026-04-19/ticks_20260419_120539.parquet"
+    ],
+    "bbo": [
+      "data/bbo/2026-04-19/bbo_20260419_080400.parquet",
+      "data/bbo/2026-04-19/bbo_20260419_083419.parquet",
+      "data/bbo/2026-04-19/bbo_20260419_090428.parquet",
+      "data/bbo/2026-04-19/bbo_20260419_093438.parquet",
+      "data/bbo/2026-04-19/bbo_20260419_100447.parquet",
+      "data/bbo/2026-04-19/bbo_20260419_103456.parquet",
+      "data/bbo/2026-04-19/bbo_20260419_110504.parquet",
+      "data/bbo/2026-04-19/bbo_20260419_113511.parquet",
+      "data/bbo/2026-04-19/bbo_20260419_120525.parquet"
+    ]
+  },
+  "t_start_ms": 1776585825491,
+  "t_end_ms": 1776600325585,
+  "duration_s": 14500.094,
+  "bin_size_ms": 30,
+  "ema_span": 200,
+  "threshold_sigma": 2.0,
+  "follower_max_dev": 0.5,
+  "cluster_gap_bins": 60,
+  "confirm_window_bins": 10,
+  "venues": [
+    "OKX Perp",
+    "Bybit Perp",
+    "Binance Perp",
+    "Binance Spot",
+    "Bitget Perp",
+    "Bybit Spot",
+    "Gate Perp",
+    "Hyperliquid Perp",
+    "Lighter Perp",
+    "MEXC Perp",
+    "edgeX Perp"
+  ],
+  "leaders": [
+    "OKX Perp",
+    "Bybit Perp"
+  ],
+  "followers": [
+    "Binance Perp",
+    "Binance Spot",
+    "Bitget Perp",
+    "Bybit Spot",
+    "Gate Perp",
+    "Hyperliquid Perp",
+    "Lighter Perp",
+    "MEXC Perp",
+    "edgeX Perp"
+  ],
+  "fees": {
+    "OKX Perp": {
+      "taker_bps": 5.0,
+      "maker_bps": 2.0
+    },
+    "Bybit Perp": {
+      "taker_bps": 5.5,
+      "maker_bps": 2.0
+    },
+    "Binance Perp": {
+      "taker_bps": 4.5,
+      "maker_bps": 2.0
+    },
+    "Binance Spot": {
+      "taker_bps": 10.0,
+      "maker_bps": 6.0
+    },
+    "Bitget Perp": {
+      "taker_bps": 6.0,
+      "maker_bps": 2.0
+    },
+    "Bybit Spot": {
+      "taker_bps": 10.0,
+      "maker_bps": 6.0
+    },
+    "Gate Perp": {
+      "taker_bps": 5.0,
+      "maker_bps": 2.0
+    },
+    "Hyperliquid Perp": {
+      "taker_bps": 3.5,
+      "maker_bps": 1.0
+    },
+    "Lighter Perp": {
+      "taker_bps": 0.0,
+      "maker_bps": 0.0
+    },
+    "MEXC Perp": {
+      "taker_bps": 2.0,
+      "maker_bps": 0.0
+    },
+    "edgeX Perp": {
+      "taker_bps": 2.6,
+      "maker_bps": 1.0
+    }
+  },
+  "bbo_available": {
+    "OKX Perp": true,
+    "Bybit Perp": true,
+    "Binance Perp": true,
+    "Binance Spot": true,
+    "Bitget Perp": true,
+    "Bybit Spot": true,
+    "Gate Perp": false,
+    "Hyperliquid Perp": false,
+    "Lighter Perp": true,
+    "MEXC Perp": false,
+    "edgeX Perp": true
+  },
+  "n_ticks": 1308595,
+  "n_bbo": 7050629,
+  "n_events": 355,
+  "n_signal_a": 95,
+  "n_signal_b": 128,
+  "n_signal_c": 132,
+  "created_at_utc": "2026-04-21T05:41:39.877800Z",
+  "source_data_layout_version": "session.v1",
+  "analysis_id": "20260419_080345_d35a5f61",
+  "recording_id": "20260419_080345"
+}

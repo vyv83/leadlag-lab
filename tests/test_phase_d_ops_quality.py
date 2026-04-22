@@ -17,7 +17,7 @@ def test_phase_d_api_endpoints_for_ops(tmp_path, monkeypatch):
     )
     (data_dir / ".collector_status.json").write_text(json.dumps({
         "running": True,
-        "session_id": "test",
+        "recording_id": "test",
         "start_time": 1,
         "planned_duration_s": 60,
         "venues": [{"name": "OKX Perp", "status": "ok", "ticks": 10}],

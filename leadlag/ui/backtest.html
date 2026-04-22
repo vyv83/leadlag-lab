@@ -13,7 +13,7 @@
   <h2>All backtests</h2>
   <div id="listStatus" class="muted">Loading...</div>
   <table id="bts"><thead><tr>
-    <th>id</th><th>strategy</th><th>session</th><th>n trades</th><th>net bps</th>
+    <th>id</th><th>strategy</th><th>analysis</th><th>n trades</th><th>net bps</th>
     <th>avg trade</th><th>win</th><th>sharpe</th><th>Monte Carlo</th>
   </tr></thead><tbody></tbody></table>
 </section>
@@ -180,7 +180,7 @@ async function showList() {
   fillTable("#bts", rows, r => [
     linkTo(`backtest.html?id=${r.id}`, r.id),
     r.strategy,
-    r.session_id,
+    r.analysis_id,
     r.n_trades,
     fmt(r.total_net_pnl_bps),
     fmt(r.avg_trade_bps),
@@ -207,9 +207,9 @@ function renderPageTitle() {
 }
 
 function renderHeader() {
-  document.getElementById("title").textContent = `${meta.strategy_name || btId} on ${meta.session_id || "analysis"}`;
+  document.getElementById("title").textContent = `${meta.strategy_name || btId} on analysis ${meta.analysis_id || ""}`.trim();
   document.getElementById("mcLink").href = `montecarlo.html?backtest=${btId}`;
-  document.getElementById("sessionLink").href = `explorer.html?session=${meta.session_id || ""}`;
+  document.getElementById("sessionLink").href = `explorer.html?analysis=${meta.analysis_id || ""}`;
   document.getElementById("jupyterBtLink").href = meta.strategy_name ? notebookUrl(meta.strategy_name) : jupyterLabUrl();
   document.getElementById("deleteBtn").hidden = false;
   document.getElementById("deleteBtn").onclick = () => {
@@ -237,7 +237,7 @@ function renderHeader() {
   [
     ["strategy", meta.strategy_name],
     ["version", meta.strategy_version],
-    ["session", meta.session_id],
+    ["analysis", meta.analysis_id],
     ["created", meta.backtest_date_utc || meta.created_at],
     ["computation", `${fmt(Number(meta.computation_time_s || 0), 3)}s`],
     ["slippage", meta.slippage_model],
@@ -414,7 +414,7 @@ function renderTradesTable() {
     sigTd.innerHTML = sigBadge(t.signal_type);
     return [
       linkTo(`trade.html?backtest=${btId}&trade=${t.trade_id}`, "Inspect"),
-      linkTo(`explorer.html?session=${meta.session_id}&event=${t.signal_bin_idx}&mode=trade&backtest=${btId}&trade=${t.trade_id}`, "View Event"),
+      linkTo(`explorer.html?analysis=${meta.analysis_id}&event=${t.signal_bin_idx}&mode=trade&backtest=${btId}&trade=${t.trade_id}`, "View Event"),
       t.trade_id,
       utc(t.entry_ts_ms),
       sigTd,

@@ -9,6 +9,15 @@
 
 ## Статус: ✅ ВСЁ СДЕЛАНО
 
+## Operational Note — 2026-04-22
+
+- Перезапущены `leadlag-lab.service`, `leadlag-monitor.service`, `leadlag-lab-jupyter.service`.
+- FastAPI после рестарта отвечает по новому контракту: `GET /api/analyses` доступен и жив.
+- Найден и устранён конфликтующий внешний runtime: `leadlag-collector.service` был запущен не из `/root/projects/leadlag-lab`, а из `/root/projects/leadlag`.
+- Внешний `leadlag-collector.service` отключён, остановлен и удалён из systemd-конфигурации.
+- Старый `data/.collector_status.json`, тянувший legacy-поле `session_id`, удалён.
+- После очистки `GET /api/collector/status` снова отражает только runtime `leadlag-lab` и возвращает честный stopped-state без legacy-полей.
+
 ### Batch 0: Backend Fixes ✅
 - 0.1 — Fix missing MC run route decorator (`@app.post("/api/backtests/{bt_id}/montecarlo/run")`)
 - 0.2 — Add 409 Conflict guard в `delete_strategy()` когда paper running
@@ -66,7 +75,7 @@
 **Bootstrap:** создаёт `<aside#sidebar>`, оборачивает `<main>` в `.app-main`.
 
 **Data:** `loadSidebarData(forceFresh)` — 8 параллельных fetch через `Promise.allSettled`:
-- `/api/collections`, `/api/sessions`, `/api/strategies`, `/api/backtests`
+- `/api/collections`, `/api/analyses`, `/api/strategies`, `/api/backtests`
 - `/api/notebooks`, `/api/collector/status`, `/api/paper/status`, `/api/paper/strategies`
 - sessionStorage cache, ключ `"sidebar_cache"`, TTL 30s
 
@@ -76,9 +85,9 @@
 - `window.refreshSidebar(forceFresh)` — инвалидирует кэш, перечитывает и перерисовывает
 - `window.insertPageTitle(nameHtml, metaText, actionsHtml)` — вставляет/заменяет `.page-title` в начало `<main>`
 
-**Связь recordings↔sessions:** `session.id.startsWith(rec.id.split("_").slice(0,3).join("_"))`
+**Связь recordings↔analyses:** `analysis.id.startsWith(rec.id.split("_").slice(0,3).join("_"))`
 
-**Active highlight:** по `location.pathname` + `qs("session")` + `qs("id")` + `qs("strategy")`
+**Active highlight:** по `location.pathname` + `qs("analysis")` + `qs("id")` + `qs("strategy")`
 
 **Delete routing:** `[×]` → navigate на `страница.html?id=X&confirm_delete=1` (danger strip на той странице)
 
@@ -91,7 +100,7 @@
 | Страница | Вызов | Данные |
 |---|---|---|
 | `quality.html` | `load(id)` → `renderPageTitle()` | `payload.quality`, `payload.meta` |
-| `explorer.html` | `loadSession(sid)` → `renderPageTitle(sid)` | `meta` от `/api/sessions/{id}/meta` |
+| `explorer.html` | `loadAnalysis(id)` → `renderPageTitle(id)` | `meta` от `/api/analyses/{id}/meta` |
 | `backtest.html` | `init()` → `renderPageTitle()` | `meta`, `stats` |
 | `montecarlo.html` | `loadBacktest(id)` → `renderPageTitle()` | `meta` |
 | `paper.html` | `refresh()` → `renderPageTitle(status)` | `status` от `/api/paper/status` |
@@ -116,6 +125,6 @@
 | T10 | MC → нет [→ Start Paper] | `mcPaperLink.href = paper.html?strategy=X` | ✅ |
 | T11 | MC low confidence | `#mcLowConfHints` с двумя кнопками | ✅ |
 | T15 | delete strategy пока paper running | 409 + "Stop paper first" | ✅ (Batch 0.2) |
-| T16 | create analysis → куда? | auto-navigate `quality.html?session=X` | ✅ |
+| T16 | create analysis → куда? | auto-navigate `quality.html?analysis=X` | ✅ |
 
 Оставшиеся тупики (T8, T12, T13, T14) — advanced features, не входили в Phase 2 scope.

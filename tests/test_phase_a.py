@@ -10,12 +10,12 @@ from leadlag import (
     Context,
     Event,
     Order,
-    Session,
+    Analysis,
     Strategy,
     iter_bbo_batches,
     iter_ticks_batches,
-    list_sessions,
-    load_session,
+    list_analyses,
+    load_analysis,
     run_backtest,
     run_monte_carlo,
 )
@@ -51,14 +51,14 @@ class LighterSignalC(Strategy):
 
 
 def test_public_api_session_backtest_and_monte_carlo(tmp_path: Path):
-    session = _make_session()
-    session.save(tmp_path)
+    analysis = _make_analysis()
+    analysis.save(tmp_path)
 
-    listed = list_sessions(tmp_path)
-    assert listed[0]["id"] == session.session_id
+    listed = list_analyses(tmp_path)
+    assert listed[0]["id"] == analysis.analysis_id
     assert listed[0]["n_signal_c"] == 1
 
-    loaded = load_session(session.session_id, tmp_path)
+    loaded = load_analysis(analysis.analysis_id, tmp_path)
     assert loaded._vwap_df is None
     assert loaded.events.filter(signal="C").count == 1
     assert loaded.events.filter(signal="C", follower="Lighter Perp", min_magnitude=2.0).count == 1
@@ -85,8 +85,8 @@ def test_public_api_session_backtest_and_monte_carlo(tmp_path: Path):
 
 
 def test_backtest_api_path_returns_structured_artifacts(tmp_path: Path, monkeypatch):
-    session = _make_session()
-    session.save(tmp_path)
+    analysis = _make_analysis()
+    analysis.save(tmp_path)
     strategies_dir = tmp_path / "strategies"
     strategies_dir.mkdir(parents=True)
     (strategies_dir / "lighter_signal_c.py").write_text(
@@ -119,7 +119,7 @@ class LighterSignalC(Strategy):
 
     response = client.post(
         "/api/backtests/run",
-        json={"strategy_name": "lighter_signal_c", "session_id": session.session_id},
+        json={"strategy_name": "lighter_signal_c", "analysis_id": analysis.analysis_id},
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -136,6 +136,26 @@ class LighterSignalC(Strategy):
     mc = client.post(f"/api/backtests/{body['backtest_id']}/montecarlo/run", json={"n": 50})
     assert mc.status_code == 200, mc.text
     assert (tmp_path / "backtest" / body["backtest_id"] / "montecarlo.json").exists()
+
+
+def test_delete_analysis_cascades_related_backtests(tmp_path: Path, monkeypatch):
+    analysis = _make_analysis()
+    analysis.save(tmp_path)
+    bt_dir = run_backtest(LighterSignalC(), analysis).save(tmp_path)
+
+    api_app = importlib.import_module("leadlag.api.app")
+    monkeypatch.setattr(api_app, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(api_app, "COLLECTOR_PROC", None)
+    monkeypatch.setattr(api_app, "PAPER_PROC", None)
+    client = TestClient(api_app.app)
+
+    assert bt_dir.exists()
+
+    deleted = client.delete(f"/api/analyses/{analysis.analysis_id}")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["removed_backtests"] == 1
+    assert not (tmp_path / "analyses" / analysis.analysis_id).exists()
+    assert not bt_dir.exists()
 
 
 def test_build_from_raw_uses_batched_tick_scan(tmp_path: Path):
@@ -175,7 +195,7 @@ def test_build_from_raw_uses_batched_tick_scan(tmp_path: Path):
     pd.DataFrame(tick_rows).to_parquet(ticks_dir / "ticks_demo.parquet")
     pd.DataFrame(bbo_rows).to_parquet(bbo_dir / "bbo_demo.parquet")
 
-    session = Session.build_from_raw(
+    analysis = Analysis.build_from_raw(
         "20260419_000000",
         [str(ticks_dir / "ticks_demo.parquet")],
         [str(bbo_dir / "bbo_demo.parquet")],
@@ -185,12 +205,12 @@ def test_build_from_raw_uses_batched_tick_scan(tmp_path: Path):
         confirm_window_bins=5,
     )
 
-    assert session.meta["n_ticks"] == len(tick_rows)
-    assert session.quality["venues"]["Lighter Perp"]["ticks_total"] == 500
-    assert session.quality["venues"]["Lighter Perp"]["side_buy_pct"] == 0.5
-    assert session.vwap_df is not None
-    assert len(session.vwap_df) == 500
-    assert session.events.count >= 1
+    assert analysis.meta["n_ticks"] == len(tick_rows)
+    assert analysis.quality["venues"]["Lighter Perp"]["ticks_total"] == 500
+    assert analysis.quality["venues"]["Lighter Perp"]["side_buy_pct"] == 0.5
+    assert analysis.vwap_df is not None
+    assert len(analysis.vwap_df) == 500
+    assert analysis.events.count >= 1
 
 
 def test_public_batch_iterators_filter_by_date_and_venue(tmp_path: Path):
@@ -218,7 +238,7 @@ def test_public_batch_iterators_filter_by_date_and_venue(tmp_path: Path):
     assert bbo_batches[0]["venue"].iloc[0] == "Lighter Perp"
 
 
-def _make_session() -> Session:
+def _make_analysis() -> Analysis:
     venues = ["OKX Perp", "Bybit Perp", "Lighter Perp", "MEXC Perp"]
     rows = []
     for i in range(80):
@@ -321,9 +341,9 @@ def _make_session() -> Session:
         "timeline_gaps": [],
     }
     meta = {
-        "session_id": "synthetic_abcdef12",
+        "analysis_id": "synthetic_abcdef12",
         "collection_id": "synthetic",
-        "collection_session_id": "synthetic",
+        "recording_id": "synthetic",
         "params": {"bin_size_ms": 50},
         "params_hash": "abcdef12",
         "collection_files": {"ticks": [], "bbo": []},
@@ -350,9 +370,9 @@ def _make_session() -> Session:
         "n_signal_b": 0,
         "n_signal_c": 1,
         "created_at_utc": "2024-04-27T00:26:40Z",
-        "source_data_layout_version": "session.v1",
+        "source_data_layout_version": "analysis.v1",
     }
-    return Session(
+    return Analysis(
         "synthetic_abcdef12",
         meta,
         [event],

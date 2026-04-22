@@ -53,7 +53,7 @@ async function loadTrade() {
   const meta = payload.meta || {};
   document.getElementById("backLink").href = `backtest.html?id=${bt}`;
   document.getElementById("explorerLink").href =
-    `explorer.html?session=${meta.session_id}&event=${trade.signal_bin_idx}&mode=trade&backtest=${bt}&trade=${trade.trade_id}`;
+    `explorer.html?analysis=${meta.analysis_id}&event=${trade.signal_bin_idx}&mode=trade&backtest=${bt}&trade=${trade.trade_id}`;
   setNav("prevLink", payload.prev_trade_id);
   setNav("nextLink", payload.next_trade_id);
   renderPageTitle();

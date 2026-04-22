@@ -183,7 +183,7 @@ async def run_collector(
     data_dir = Path(data_dir)
     active = {n: c for n, c in REGISTRY.items()
               if c.enabled and (venues_filter is None or n in venues_filter)}
-    session_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    recording_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     start_ts_ms = int(time.time() * 1000)
 
     trades_q: asyncio.Queue = asyncio.Queue(maxsize=1_000_000)
@@ -199,20 +199,20 @@ async def run_collector(
 
     try:
         deadline = time.time() + collect_seconds
-        _append_log(data_dir, "collector", "started", f"session_id={session_id}, venues={','.join(active)}")
+        _append_log(data_dir, "collector", "started", f"recording_id={recording_id}, venues={','.join(active)}")
         while time.time() < deadline:
             _write_status(
-                data_dir, session_id, start_ts_ms, collect_seconds, active, stats,
+                data_dir, recording_id, start_ts_ms, collect_seconds, active, stats,
                 running=True, rotation_s=rotation_s, bin_size_ms=bin_size_ms,
             )
             await asyncio.sleep(2)
     finally:
         stop_event.set()
         _write_status(
-            data_dir, session_id, start_ts_ms, collect_seconds, active, stats,
+            data_dir, recording_id, start_ts_ms, collect_seconds, active, stats,
             running=False, rotation_s=rotation_s, bin_size_ms=bin_size_ms,
         )
-        _append_log(data_dir, "collector", "stopping", f"session_id={session_id}")
+        _append_log(data_dir, "collector", "stopping", f"recording_id={recording_id}")
         await asyncio.sleep(1)
         for t in ws_tasks:
             t.cancel()
@@ -223,7 +223,7 @@ async def run_collector(
 
 def _write_status(
     data_dir: Path,
-    session_id: str,
+    recording_id: str,
     start_ts_ms: int,
     planned_duration_s: int,
     active: dict[str, VenueConfig],
@@ -283,7 +283,7 @@ def _write_status(
         "running": running,
         "running_effective": running,
         "stale": False,
-        "session_id": session_id,
+        "recording_id": recording_id,
         "start_time": start_ts_ms,
         "start_time_utc": datetime.fromtimestamp(start_ts_ms / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
         "planned_duration_s": planned_duration_s,

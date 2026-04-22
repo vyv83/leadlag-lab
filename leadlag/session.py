@@ -1,12 +1,12 @@
-"""Session loading, persistence and batch-analysis artifact generation.
+"""Analysis loading, persistence and batch-analysis artifact generation.
 
 The public contract is intentionally split:
   * ``events.json`` stays small and contains metadata/metrics only.
   * ``price_windows.json`` and ``bbo_windows.json`` hold chart windows and are
     loaded lazily by API/UI event-detail calls.
   * ``vwap.parquet``/``ema.parquet``/``dev.parquet``/``bbo.parquet`` are local
-    frame artifacts that make ``load_session(...).vwap_df`` usable from
-    notebooks and let the backtest API run from a saved session.
+    frame artifacts that make ``load_analysis(...).vwap_df`` usable from
+    notebooks and let the backtest API run from a saved analysis.
 """
 from __future__ import annotations
 
@@ -25,14 +25,14 @@ import pyarrow.parquet as pq
 from leadlag.contracts import (
     utc_from_ms,
     utc_now_iso,
-    validate_session_artifacts,
-    validate_session_payload,
+    validate_analysis_artifacts,
+    validate_analysis_payload,
     write_json,
 )
 
 
 DEFAULT_DATA_DIR = Path("data")
-SESSION_CONTRACT_VERSION = "session.v1"
+ANALYSIS_CONTRACT_VERSION = "analysis.v1"
 PARQUET_BATCH_ROWS = 250_000
 PRICE_SAMPLE_SIZE = 4096
 TIMELINE_GAP_MS = 10_000
@@ -43,27 +43,27 @@ def _params_hash(params: dict) -> str:
     return hashlib.sha256(payload).hexdigest()[:8]
 
 
-def make_session_id(collection_id: str, params: dict) -> str:
+def make_analysis_id(collection_id: str, params: dict) -> str:
     return f"{collection_id}_{_params_hash(params)}"
 
 
 class EventView(dict):
-    def __init__(self, row: dict, session: "Session | None" = None):
+    def __init__(self, row: dict, analysis: "Analysis | None" = None):
         super().__init__(row)
-        self._session = session
+        self._analysis = analysis
 
     def plot(self, follower: str | None = None):
-        if self._session is None:
-            raise ValueError("EventView is not attached to a Session")
-        return self._session.plot_event(int(self["bin_idx"]), follower=follower)
+        if self._analysis is None:
+            raise ValueError("EventView is not attached to an Analysis")
+        return self._analysis.plot_event(int(self["bin_idx"]), follower=follower)
 
 
 class EventsTable:
     """Notebook-friendly wrapper around event rows."""
 
-    def __init__(self, rows: Iterable[dict] | None = None, session: "Session | None" = None):
+    def __init__(self, rows: Iterable[dict] | None = None, analysis: "Analysis | None" = None):
         self.rows = list(rows or [])
-        self._session = session
+        self._analysis = analysis
 
     @property
     def count(self) -> int:
@@ -76,7 +76,7 @@ class EventsTable:
         return iter(self.rows)
 
     def __getitem__(self, i):
-        return EventView(self.rows[i], self._session)
+        return EventView(self.rows[i], self._analysis)
 
     def filter(
         self,
@@ -115,7 +115,7 @@ class EventsTable:
             out = [e for e in out if _utc_time_in_range(int(e.get("ts_ms", 0)), start_hhmm, end_hhmm)]
         for key, value in exact.items():
             out = [e for e in out if e.get(key) == value]
-        return EventsTable(out, session=self._session)
+        return EventsTable(out, analysis=self._analysis)
 
     def stats(self, follower: str) -> dict:
         rows = [e for e in self.rows if follower in e.get("follower_metrics", {})]
@@ -143,23 +143,23 @@ class EventsTable:
         delays_ms: list[int] | None = None,
         holds_ms: list[int] | None = None,
     ) -> pd.DataFrame:
-        if self._session is None or self._session.vwap_df is None:
-            raise ValueError("EventsTable.grid_search requires a Session with vwap_df")
+        if self._analysis is None or self._analysis.vwap_df is None:
+            raise ValueError("EventsTable.grid_search requires an Analysis with vwap_df")
         from leadlag.analysis.metrics import grid_search
 
-        followers = followers or self._session.meta.get("followers", [])
+        followers = followers or self._analysis.meta.get("followers", [])
         fees = {
-            venue: float((self._session.meta.get("fees", {}).get(venue) or {}).get("taker_bps", 0.0))
+            venue: float((self._analysis.meta.get("fees", {}).get(venue) or {}).get("taker_bps", 0.0))
             for venue in followers
         }
         return grid_search(
             self.rows,
-            self._session.vwap_df,
+            self._analysis.vwap_df,
             followers,
             fees,
             delay_grid_ms=delays_ms,
             hold_grid_ms=holds_ms,
-            bin_size_ms=int(self._session.meta.get("bin_size_ms", 50)),
+            bin_size_ms=int(self._analysis.meta.get("bin_size_ms", 50)),
         )
 
     def plot_lag_distribution(self, follower: str):
@@ -202,10 +202,10 @@ class EventsTable:
         return _style_fig(fig, f"{follower} equity hold={hold_ms}ms", "event", "cumulative bps")
 
 
-class Session:
+class Analysis:
     def __init__(
         self,
-        session_id: str,
+        analysis_id: str,
         meta: dict,
         events: EventsTable | list[dict],
         quality: dict | None = None,
@@ -221,10 +221,10 @@ class Session:
         grid_df: pd.DataFrame | None = None,
         ci: list[dict] | None = None,
     ):
-        self.session_id = session_id
+        self.analysis_id = analysis_id
         self.meta = meta
         self.events = events if isinstance(events, EventsTable) else EventsTable(events)
-        self.events._session = self
+        self.events._analysis = self
         self.quality = quality or {}
         self.root_dir = root_dir
         self._price_windows = price_windows
@@ -239,7 +239,7 @@ class Session:
 
     @property
     def collection_id(self) -> str:
-        return self.meta.get("collection_session_id") or self.meta.get("collection_id") or self.session_id.rsplit("_", 1)[0]
+        return self.meta.get("recording_id") or self.meta.get("collection_id") or self.analysis_id.rsplit("_", 1)[0]
 
     @property
     def params(self) -> dict:
@@ -394,13 +394,13 @@ class Session:
         return _style_fig(fig, f"Event {bin_idx} {event.get('signal')}", "ms from event", "bps from t0")
 
     def save(self, data_dir: Path | str = DEFAULT_DATA_DIR) -> Path:
-        out = Path(data_dir) / "sessions" / self.session_id
+        out = Path(data_dir) / "analyses" / self.analysis_id
         out.mkdir(parents=True, exist_ok=True)
 
-        meta = _complete_meta(self.meta, self.session_id, self.events.rows, self.quality)
+        meta = _complete_meta(self.meta, self.analysis_id, self.events.rows, self.quality)
         price_windows = self.price_windows if self._price_windows is not None else []
         bbo_windows = self.bbo_windows if self._bbo_windows is not None else []
-        validate_session_payload(meta, self.events.rows, price_windows, bbo_windows, self.quality)
+        validate_analysis_payload(meta, self.events.rows, price_windows, bbo_windows, self.quality)
 
         write_json(out / "meta.json", meta, indent=2)
         write_json(out / "events.json", self.events.rows)
@@ -416,7 +416,7 @@ class Session:
         _write_frame(out / "bbo.parquet", self._bbo_df)
         _write_frame(out / "metrics.parquet", self._metrics_df)
         _write_frame(out / "grid.parquet", self._grid_df)
-        validate_session_artifacts(out)
+        validate_analysis_artifacts(out)
         self.meta = meta
         self.root_dir = out
         return out
@@ -437,7 +437,7 @@ class Session:
         confirm_window_bins: int = 10,
         window_ms: int = 10_000,
         progress_callback=None,
-    ) -> "Session":
+    ) -> "Analysis":
         """Run the full batch pipeline over raw parquet files."""
         from leadlag.analysis.binning import bin_to_vwap
         from leadlag.analysis.ema import compute_deviation, compute_ema
@@ -459,7 +459,7 @@ class Session:
             "confirm_window_bins": confirm_window_bins,
             "window_ms": window_ms,
         }
-        session_id = make_session_id(collection_id, params)
+        analysis_id = make_analysis_id(collection_id, params)
         progress("files", "Resolving raw parquet files", 0.02)
         tick_files = _files_for(ticks_path_glob)
         bbo_files = _files_for(bbo_path_glob) if bbo_path_glob else []
@@ -561,9 +561,9 @@ class Session:
         ci = _build_ci(grid_df, bootstrap_ci)
 
         meta = {
-            "session_id": session_id,
+            "analysis_id": analysis_id,
             "collection_id": collection_id,
-            "collection_session_id": collection_id,
+            "recording_id": collection_id,
             "params": params,
             "params_hash": _params_hash(params),
             "collection_files": {
@@ -594,12 +594,12 @@ class Session:
             "n_signal_b": sum(1 for e in events if e["signal"] == "B"),
             "n_signal_c": sum(1 for e in events if e["signal"] == "C"),
             "created_at_utc": utc_now_iso(),
-            "source_data_layout_version": SESSION_CONTRACT_VERSION,
+            "source_data_layout_version": ANALYSIS_CONTRACT_VERSION,
         }
         progress("done", f"Analysis prepared: {len(events)} events", 0.96)
 
         return cls(
-            session_id=session_id,
+            analysis_id=analysis_id,
             meta=meta,
             events=EventsTable(events),
             quality=quality,
@@ -631,23 +631,23 @@ class Session:
         return pd.read_parquet(path)
 
 
-def load_session(
-    session_id: str,
+def load_analysis(
+    analysis_id: str,
     data_dir: Path | str = DEFAULT_DATA_DIR,
     *,
     load_windows: bool = False,
     load_frames: bool = False,
-) -> Session:
-    root = Path(data_dir) / "sessions" / session_id
+) -> Analysis:
+    root = Path(data_dir) / "analyses" / analysis_id
     if not root.is_dir():
-        raise FileNotFoundError(f"Session directory not found: {root}")
+        raise FileNotFoundError(f"Analysis directory not found: {root}")
 
     meta = json.loads((root / "meta.json").read_text())
     events = json.loads((root / "events.json").read_text())
     quality = json.loads((root / "quality.json").read_text()) if (root / "quality.json").exists() else {"venues": {}}
     ci = json.loads((root / "ci.json").read_text()) if (root / "ci.json").exists() else []
-    session = Session(
-        session_id=session_id,
+    analysis = Analysis(
+        analysis_id=analysis_id,
         meta=meta,
         events=EventsTable(events),
         quality=quality,
@@ -657,15 +657,15 @@ def load_session(
         ci=ci,
     )
     if load_frames:
-        _ = session.vwap_df
-        _ = session.ema_df
-        _ = session.dev_df
-        _ = session.bbo_df
-    return session
+        _ = analysis.vwap_df
+        _ = analysis.ema_df
+        _ = analysis.dev_df
+        _ = analysis.bbo_df
+    return analysis
 
 
-def list_sessions(data_dir: Path | str = DEFAULT_DATA_DIR) -> list[dict]:
-    root = Path(data_dir) / "sessions"
+def list_analyses(data_dir: Path | str = DEFAULT_DATA_DIR) -> list[dict]:
+    root = Path(data_dir) / "analyses"
     if not root.is_dir():
         return []
     out = []
@@ -679,9 +679,10 @@ def list_sessions(data_dir: Path | str = DEFAULT_DATA_DIR) -> list[dict]:
             continue
         t_start = meta.get("t_start_ms")
         out.append({
-            "id": meta.get("session_id", d.name),
-            "collection_id": meta.get("collection_session_id") or meta.get("collection_id"),
-            "collection_session_id": meta.get("collection_session_id") or meta.get("collection_id"),
+            "id": meta.get("analysis_id", d.name),
+            "analysis_id": meta.get("analysis_id", d.name),
+            "collection_id": meta.get("recording_id") or meta.get("collection_id"),
+            "recording_id": meta.get("recording_id") or meta.get("collection_id"),
             "params_hash": meta.get("params_hash"),
             "date": (utc_from_ms(t_start) or "")[:10] if t_start else None,
             "duration_h": (float(meta.get("duration_s", 0.0)) / 3600.0) if meta.get("duration_s") is not None else None,
@@ -1081,12 +1082,12 @@ def _write_frame(path: Path, df: pd.DataFrame | None) -> None:
         df.to_parquet(path)
 
 
-def _complete_meta(meta: dict, session_id: str, events: list[dict], quality: dict) -> dict:
+def _complete_meta(meta: dict, analysis_id: str, events: list[dict], quality: dict) -> dict:
     out = dict(meta)
-    out.setdefault("session_id", session_id)
-    out.setdefault("collection_session_id", out.get("collection_id", session_id.rsplit("_", 1)[0]))
-    out.setdefault("collection_id", out["collection_session_id"])
-    out.setdefault("params_hash", session_id.rsplit("_", 1)[-1] if "_" in session_id else "")
+    out.setdefault("analysis_id", analysis_id)
+    out.setdefault("recording_id", out.get("collection_id", analysis_id.rsplit("_", 1)[0]))
+    out.setdefault("collection_id", out["recording_id"])
+    out.setdefault("params_hash", analysis_id.rsplit("_", 1)[-1] if "_" in analysis_id else "")
     out.setdefault("collection_files", {"ticks": [], "bbo": []})
     out.setdefault("t_start_ms", quality.get("t_start_ms", 0))
     out.setdefault("t_end_ms", quality.get("t_end_ms", out["t_start_ms"]))
@@ -1107,7 +1108,7 @@ def _complete_meta(meta: dict, session_id: str, events: list[dict], quality: dic
     out["n_signal_b"] = sum(1 for e in events if e.get("signal") == "B")
     out["n_signal_c"] = sum(1 for e in events if e.get("signal") == "C")
     out.setdefault("created_at_utc", utc_now_iso())
-    out.setdefault("source_data_layout_version", SESSION_CONTRACT_VERSION)
+    out.setdefault("source_data_layout_version", ANALYSIS_CONTRACT_VERSION)
     return out
 
 

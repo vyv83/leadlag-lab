@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from leadlag import Context, Event, Order, Strategy, run_backtest, run_monte_carlo
 from leadlag.backtest import BacktestResult
 from leadlag.monitor.snapshot import read_collector_status, read_history
-from tests.test_phase_a import _make_session
+from tests.test_phase_a import _make_analysis
 
 
 BASE_TS = 1_714_500_000_000
@@ -60,9 +60,18 @@ def test_analysis_endpoint_creates_session(tmp_path: Path, monkeypatch):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["ok"] is True
-    assert body["events_count"] >= 1
-    assert (tmp_path / "sessions" / body["session_id"] / "events.json").exists()
-    events = client.get(f"/api/sessions/{body['session_id']}/events").json()
+    assert body["analysis_id"]
+    job = None
+    for _ in range(40):
+        job = client.get(body["status_url"]).json()
+        if job["status"] == "completed":
+            break
+        time.sleep(0.05)
+    assert job is not None
+    assert job["status"] == "completed"
+    assert job["events_count"] >= 1
+    assert (tmp_path / "analyses" / body["analysis_id"] / "events.json").exists()
+    events = client.get(f"/api/analyses/{body['analysis_id']}/events").json()
     assert any(e["signal"] == "C" for e in events)
 
 
@@ -70,7 +79,7 @@ def test_collector_status_stale_returns_not_running(tmp_path: Path):
     old_ms = int((time.time() - 60) * 1000)
     (tmp_path / ".collector_status.json").write_text(json.dumps({
         "running": True,
-        "session_id": "old",
+        "recording_id": "old",
         "updated_at_ms": old_ms,
         "venues": [{"name": "Aster Perp", "status": "ok", "ticks": 0}],
     }))
@@ -124,7 +133,7 @@ def test_limit_fee_contract():
         def on_event(self, event: Event, ctx: Context) -> Order | None:
             return Order(venue="OKX Perp", side="buy", entry_type="limit", hold_ms=500)
 
-    result = run_backtest(LimitOkx(), _make_session())
+    result = run_backtest(LimitOkx(), _make_analysis())
 
     trade = result.trades[0]
     assert trade["fee_type_entry"] == "maker"
@@ -145,21 +154,21 @@ def test_reverse_mode_generates_reversed_close_trade():
                 hold_ms=2000,
             )
 
-    session = _make_session()
-    second = copy.deepcopy(session.events.rows[0])
+    analysis = _make_analysis()
+    second = copy.deepcopy(analysis.events.rows[0])
     second.update({
         "event_id": 1,
         "bin_idx": 25,
-        "ts_ms": int(session.vwap_df["ts_ms"].iloc[25]),
+        "ts_ms": int(analysis.vwap_df["ts_ms"].iloc[25]),
         "direction": -1,
         "signal": "C",
         "anchor_leader": "Bybit Perp",
         "confirmer_leader": "OKX Perp",
     })
-    session.events.rows.append(second)
-    session.meta["n_events"] = 2
+    analysis.events.rows.append(second)
+    analysis.meta["n_events"] = 2
 
-    result = run_backtest(ReverseLighter(), session)
+    result = run_backtest(ReverseLighter(), analysis)
 
     assert len(result.trades) == 2
     assert result.trades[0]["exit_reason"] == "reversed"
@@ -170,7 +179,7 @@ def test_reverse_mode_generates_reversed_close_trade():
 def test_montecarlo_default_not_degenerate():
     result = BacktestResult(
         strategy_name="demo",
-        session_id="session",
+        analysis_id="analysis",
         params={},
         trades=[
             {"trade_id": 0, "net_pnl_bps": 1.0},

@@ -8,13 +8,13 @@ Full technical spec in [plan.md](plan.md); documentation order in [00_DOCS_PIPEL
 
 ```
 leadlag-lab/
-├── leadlag/                package (venues, collector, analysis, session,
+├── leadlag/                package (venues, collector, analysis,
 │                           strategy, backtest, realtime, paper, monitor, api, ui)
 ├── config/
 │   ├── venues.yaml         12-venue registry
 │   ├── jupyter.env         Jupyter token + port (git-ignored, создаётся setup_jupyter.sh)
 │   └── jupyter.env.example шаблон для jupyter.env
-├── data/                   runtime data (ticks/, bbo/, sessions/, strategies/,
+├── data/                   runtime data (ticks/, bbo/, analyses/, strategies/,
 │                           backtest/, paper/, jupyter_home/, .system_history.jsonl, ...)
 ├── deploy/                 systemd units + nginx snippets
 │   ├── leadlag-lab.service
@@ -76,6 +76,10 @@ systemctl enable --now leadlag-lab leadlag-monitor leadlag-lab-jupyter
 - **leadlag-lab** — FastAPI (uvicorn) на `127.0.0.1:8899`
 - **leadlag-monitor** — демон, пишет `data/.system_history.jsonl` (каждые 5с) и `data/.ping_cache.json` (каждые 10с)
 - **leadlag-lab-jupyter** — JupyterLab на `127.0.0.1:8889`, токен из `config/jupyter.env`
+
+Важно:
+- отдельного `leadlag-collector.service` для `leadlag-lab` нет;
+- collector в этой архитектуре запускается из API через `POST /api/collector/start` как subprocess, а не как постоянный systemd daemon.
 
 ### 5. Добавить nginx location blocks
 
@@ -165,6 +169,12 @@ systemctl restart leadlag-monitor
 systemctl restart leadlag-lab leadlag-monitor
 ```
 
+### Перезапуск всего runtime этой репы
+
+```bash
+systemctl restart leadlag-lab leadlag-monitor leadlag-lab-jupyter
+```
+
 ### После изменений в HTML/JS/CSS (без Python)
 
 Перезапуск **не нужен** — uvicorn раздаёт статику из `leadlag/ui/` напрямую с диска. Достаточно обновить страницу в браузере (Ctrl+Shift+R — hard refresh, т.к. стоит `Cache-Control: no-cache`).
@@ -183,6 +193,24 @@ cp /root/projects/leadlag-lab/deploy/leadlag-monitor.service /etc/systemd/system
 systemctl daemon-reload
 systemctl restart leadlag-lab leadlag-monitor
 ```
+
+### Operational note: collector runtime
+
+На 2026-04-22 внешний `leadlag-collector.service`, который смотрел в `/root/projects/leadlag`, был отключён и удалён из systemd-конфигурации, потому что он противоречил архитектуре `leadlag-lab` и тащил старый runtime/status-контракт.
+
+Теперь правило одно:
+- `leadlag-lab`, `leadlag-monitor`, `leadlag-lab-jupyter` живут как systemd services;
+- collector для `leadlag-lab` живёт только как subprocess, который стартует из API;
+- `GET /api/collector/status` без файла `data/.collector_status.json` честно возвращает `{"running": false, ...}` без legacy-полей.
+
+Быстрая проверка после рестарта:
+
+```bash
+curl -s http://127.0.0.1:8899/api/analyses
+curl -s http://127.0.0.1:8899/api/collector/status
+```
+
+Если когда-нибудь понадобится отдельный daemon-collector, его нужно проектировать заново уже под контракт `analysis/recording`, а не возвращать старый unit из другого checkout.
 
 ### Перезапуск JupyterLab
 
@@ -236,20 +264,20 @@ cd /root/projects/leadlag-lab
 # Коллектор (пишет data/ticks/YYYY-MM-DD/*.parquet + data/bbo/*)
 /root/projects/leadlag/.venv/bin/python -m leadlag.collector --duration 3600
 
-# Построить сессию из parquet (batch pipeline)
+# Построить analysis из raw parquet (batch pipeline)
 /root/projects/leadlag/.venv/bin/python -c "
-from leadlag.session import Session
-s = Session.build_from_raw('20260411_164417', 'data/ticks', 'data/bbo')
+from leadlag.session import Analysis
+s = Analysis.build_from_raw('20260411_164417', 'data/ticks', 'data/bbo')
 s.save()
-print(s.session_id, s.events.count)
+print(s.analysis_id, s.events.count)
 "
 
 # Запустить бектест из CLI
 /root/projects/leadlag/.venv/bin/python -c "
-from leadlag import load_session, load_strategy, run_backtest
+from leadlag import load_analysis, load_strategy, run_backtest
 strat = load_strategy('data/strategies/lighter_c_v1.py')
-sess  = load_session('20260411_164417_a3f2c1b0')
-bt = run_backtest(strat, sess).save()
+analysis = load_analysis('20260411_164417_a3f2c1b0')
+bt = run_backtest(strat, analysis).save()
 print(bt)
 "
 ```
@@ -265,7 +293,7 @@ print(bt)
 | Публичный URL     | `https://vyv.ftp.sh/leadlag-lab/`                |
 | Dashboard UI      | `/leadlag-lab/ui/dashboard.html`                 |
 | Стратегии         | `data/strategies/*.py`                           |
-| Сессии            | `data/sessions/{collection_id}_{params_hash}/`   |
+| Analyses          | `data/analyses/{collection_id}_{params_hash}/`   |
 | Бектесты          | `data/backtest/{strategy}_{timestamp}/`          |
 | Paper trading     | `data/paper/{strategy}/`                         |
 | Статус-файлы      | `data/.collector_status.json`, `.paper_status.json` |

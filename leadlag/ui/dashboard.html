@@ -65,7 +65,6 @@
       <h2>Start Collection</h2>
       <div class="toolbar">
         <label>Duration h <input id="dashDurationHours" class="compact-number" type="number" min="0.1" step="0.1" value="1"></label>
-        <label>Bin ms <input id="dashBinSize" class="compact-number" type="number" min="10" step="10" value="50"></label>
         <label>Rotation m <input id="dashRotation" class="compact-number" type="number" min="1" step="1" value="30"></label>
       </div>
       <div class="toolbar">
@@ -136,7 +135,7 @@ async function refreshAll() {
     fetchJSON("/api/system/processes"),
     fetchJSON("/api/collector/status"),
     fetchJSON("/api/collections"),
-    fetchJSON("/api/sessions"),
+    fetchJSON("/api/analyses"),
     fetchJSON("/api/backtests"),
     fetchJSON("/api/system/files"),
     fetchJSON("/api/paper/status"),
@@ -165,12 +164,12 @@ function renderTop(sys, collector, paper, collections, sessions, backtests, stra
     ["Analyses", `${sessions.length} total`],
     ["Strategies", `${strategies.length} total`],
     ["Backtests", `${backtests.length} total`],
-    ["Collector", collector.stale ? `stale ${collector.session_id || ""}` : collector.running ? `running ${collector.session_id || ""}` : "stopped"],
+    ["Collector", collector.stale ? `stale ${collector.recording_id || ""}` : collector.running ? `running ${collector.recording_id || ""}` : "stopped"],
     ["Paper", paper.blocked ? `blocked: ${paper.mode}` : paper.running ? "running" : "stopped"],
   ]);
   const latest = sessions[0];
   const open = document.getElementById("openLatest");
-  open.href = latest ? `explorer.html?session=${latest.id}` : "explorer.html";
+  open.href = latest ? `explorer.html?analysis=${latest.id}` : "explorer.html";
   open.classList.toggle("disabled", !latest);
   document.getElementById("runAnalysisLatest").disabled = !collections.length;
   document.getElementById("startHereBanner").hidden = !!(collections.length || sessions.length || strategies.length);
@@ -251,7 +250,7 @@ function renderCollections(rows) {
     r.n_ticks,
     r.n_bbo,
     r.n_venues,
-    r.latest_session_id ? linkTo(`explorer.html?session=${r.latest_session_id}`, "open") : analysisButton(r.id),
+    r.latest_analysis_id ? linkTo(`explorer.html?analysis=${r.latest_analysis_id}`, "open") : analysisButton(r.id),
   ]);
 }
 
@@ -261,7 +260,7 @@ function analysisButton(collectionId) {
 
 function renderSessions(rows) {
   fillTable("#sessions", rows.slice(0, 8), r => [
-    linkTo(`explorer.html?session=${r.id}`, r.id),
+    linkTo(`explorer.html?analysis=${r.id}`, r.id),
     r.date,
     r.n_events,
     `${r.n_signal_a}/${r.n_signal_b}/${r.n_signal_c}`,
@@ -316,7 +315,7 @@ async function runAnalysis(collectionId) {
       params: { bin_size_ms: 50, ema_span_bins: 200, threshold_sigma: 2.0, follower_max_dev: 0.5 }
     });
     await waitForAnalysisJob(res.job_id);
-    location.href = `explorer.html?session=${res.session_id}`;
+    location.href = `explorer.html?analysis=${res.analysis_id}`;
   } finally {
     document.getElementById("runAnalysisLatest").disabled = false;
   }
@@ -352,7 +351,6 @@ document.getElementById("dashStartNow").onclick = async () => {
   await postJSON("/api/collector/start", {
     duration_s: Math.round(Number(document.getElementById("dashDurationHours").value || 1) * 3600),
     venues: dashSelectedVenues(),
-    bin_size_ms: Number(document.getElementById("dashBinSize").value || 50),
     rotation_s: Number(document.getElementById("dashRotation").value || 30) * 60,
   });
   document.getElementById("collectorDialog").close();

@@ -13,7 +13,7 @@ from typing import Any
 import pandas as pd
 
 from leadlag.contracts import utc_from_ms
-from leadlag.session import list_sessions
+from leadlag.session import list_analyses
 
 
 DEFAULT_MAX_GAP_S = 45 * 60
@@ -37,21 +37,21 @@ def list_collections(data_dir: Path | str = "data", *, max_gap_s: int = DEFAULT_
         else:
             groups.append([row])
 
-    sessions_by_collection: dict[str, list[dict]] = {}
-    for session in list_sessions(data_dir):
-        cid = session.get("collection_session_id") or session.get("collection_id")
+    analyses_by_collection: dict[str, list[dict]] = {}
+    for analysis in list_analyses(data_dir):
+        cid = analysis.get("recording_id") or analysis.get("collection_id")
         if cid:
-            sessions_by_collection.setdefault(str(cid), []).append(session)
+            analyses_by_collection.setdefault(str(cid), []).append(analysis)
 
     collections = [_collection_from_group(g, data_dir) for g in groups]
     for collection in collections:
         analyzed = sorted(
-            sessions_by_collection.get(collection["id"], []),
-            key=lambda s: str(s.get("created_at_utc") or ""),
+            analyses_by_collection.get(collection["id"], []),
+            key=lambda a: str(a.get("created_at_utc") or ""),
             reverse=True,
         )
-        collection["analyzed_sessions"] = [s["id"] for s in analyzed if s.get("id")]
-        collection["latest_session_id"] = collection["analyzed_sessions"][0] if collection["analyzed_sessions"] else None
+        collection["analyzed_analyses"] = [a["id"] for a in analyzed if a.get("id")]
+        collection["latest_analysis_id"] = collection["analyzed_analyses"][0] if collection["analyzed_analyses"] else None
 
     return sorted(collections, key=lambda r: int(r.get("t_start_ms") or 0), reverse=True)
 

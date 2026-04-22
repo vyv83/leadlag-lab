@@ -38,7 +38,7 @@ LeadLag Lab — это лаборатория разработки и прове
 
 Задача:
 
-Запустить сбор данных по выбранным venues, duration, bin size и rotation.
+Запустить сбор raw данных по выбранным venues, duration и rotation.
 
 Ожидаемый результат:
 
@@ -54,6 +54,11 @@ LeadLag Lab — это лаборатория разработки и прове
 - если данные собираются плохо, стратегия не создается;
 - сначала исправляются venues, latency, gaps, BBO, coverage.
 
+Примечание:
+
+- `bin_size_ms` не относится к raw collection;
+- размер бина выбирается позже, на этапе создания Analysis из Recording.
+
 ---
 
 ### Шаг 2. Анализ raw collection
@@ -62,14 +67,14 @@ LeadLag Lab — это лаборатория разработки и прове
 
 Задача:
 
-Запустить анализ последней collection.
+Запустить анализ последнего Recording.
 
 Ожидаемый результат:
 
-- создается analyzed session;
-- у session есть events;
+- создается Analysis;
+- у Analysis есть events;
 - есть counts по Signal A/B/C;
-- session открывается в Explorer.
+- Analysis открывается в Explorer.
 
 Решение после шага:
 
@@ -132,7 +137,7 @@ LeadLag Lab — это лаборатория разработки и прове
 Типовой процесс:
 
 1. Открыть notebook разработки стратегии.
-2. Загрузить session через `load_session`.
+2. Загрузить Analysis через `load_session`.
 3. Отфильтровать events.
 4. Изучить статистику и отдельные events.
 5. Написать Strategy class.
@@ -193,7 +198,7 @@ LeadLag Lab — это лаборатория разработки и прове
 
 Задача:
 
-Проверить стратегию на session с учетом execution reality.
+Проверить стратегию на Analysis с учетом execution reality.
 
 Проверить:
 
@@ -364,7 +369,7 @@ LeadLag Lab — это лаборатория разработки и прове
 - popup Start Collection;
 - Collector Status block;
 - Paper Trader block;
-- Last Analysis Session block;
+- Latest Analyses block;
 
 Что оцениваем:
 
@@ -404,7 +409,7 @@ LeadLag Lab — это лаборатория разработки и прове
 
 Что оцениваем:
 
-- можно ли доверять session;
+- можно ли доверять Analysis;
 - какие venues надо исключить;
 - есть ли gaps;
 - есть ли spread/BBO проблемы.
@@ -435,7 +440,7 @@ LeadLag Lab — это лаборатория разработки и прове
 
 Скриншоты:
 
-- загрузка session;
+- загрузка Analysis;
 - фильтрация events;
 - stats/grid search;
 - ячейка Strategy class;
@@ -580,7 +585,7 @@ Priority: P0/P1/P2/P3
 Проект считается доведенным до нужного рабочего состояния, когда пользователь может:
 
 1. Собрать данные.
-2. Проанализировать collection.
+2. Проанализировать Recording.
 3. Найти паттерн в Explorer.
 4. Создать стратегию в notebook.
 5. Сохранить стратегию как `.py`.
@@ -595,4 +600,3 @@ Priority: P0/P1/P2/P3
 Главный критерий:
 
 **каждый экран должен помогать создать, проверить или улучшить стратегию.**
-

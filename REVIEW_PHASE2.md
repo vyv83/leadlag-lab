@@ -65,3 +65,5 @@ Date: 2026-04-21
 
 - `PROGRESS_PHASE2.md` currently overstates completion. This file is the corrective review log for the current stabilization pass.
 - The delete smoke-test revealed an ownership nuance: deleting these files from the current shell user can fail with `PermissionError`, while the real app path works under the service user `leadlag-lab`. That is important operational context, but it does not block the actual UI flow when the service is running under the intended account.
+- On 2026-04-22 the app runtime was restarted successfully and the infrastructure mismatch was closed: the foreign `leadlag-collector.service` wired to `/root/projects/leadlag` was disabled and removed.
+- After removing the foreign unit and deleting the stale collector status file, `/api/collector/status` returned to the clean `leadlag-lab` contract without legacy fields such as `session_id`.

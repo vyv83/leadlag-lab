@@ -11,7 +11,6 @@
   <h2>Control</h2>
   <div class="toolbar">
     <label>Duration h <input id="durationHours" class="compact-number" type="number" min="0.1" step="0.1" value="1"></label>
-    <label>Bin ms <input id="binSize" class="compact-number" type="number" min="10" step="10" value="50"></label>
     <label>Rotation m <input id="rotation" class="compact-number" type="number" min="1" step="1" value="30"></label>
     <span style="color:#30363d">│</span>
     <button id="selectLeaders">Leaders</button>
@@ -113,11 +112,10 @@ function renderStatus(st) {
   const rows = [
     ["running", checkMark(st.running)],
     ["proc alive", checkMark(st.proc_alive)],
-    ["recording id", st.session_id || "—"],
+    ["recording id", st.recording_id || "—"],
     ["started UTC", utc(st.start_time)],
     ["planned", `${fmt(st.planned_duration_s, 0)}s`],
     ["rotation", `${fmt(st.rotation_s, 0)}s`],
-    ["bin size", `${fmt(st.bin_size_ms, 0)}ms`],
     ["updated UTC", utc(st.updated_at_ms)],
     ["state", st.stale ? "stale" : (st.running ? "running" : "stopped")],
   ];
@@ -203,7 +201,6 @@ document.getElementById("start").onclick = async () => {
   await postJSON("/api/collector/start", {
     duration_s: Math.round(Number(document.getElementById("durationHours").value || 1) * 3600),
     venues: selectedVenues(),
-    bin_size_ms: Number(document.getElementById("binSize").value || 50),
     rotation_s: Number(document.getElementById("rotation").value || 30) * 60,
   });
   refresh();
@@ -214,7 +211,6 @@ document.getElementById("restart").onclick = async () => {
   await postJSON("/api/collector/start", {
     duration_s: Math.round(Number(document.getElementById("durationHours").value || 1) * 3600),
     venues: selectedVenues(),
-    bin_size_ms: Number(document.getElementById("binSize").value || 50),
     rotation_s: Number(document.getElementById("rotation").value || 30) * 60,
   });
   refresh();
@@ -225,10 +221,10 @@ document.getElementById("analyzeLatest").onclick = async () => {
   btn.disabled = true;
   try {
     const res = await postJSON(`/api/collections/${collections[0].id}/analyze`, {
-      params: { bin_size_ms: Number(document.getElementById("binSize").value || 50) }
+      params: { bin_size_ms: 50, ema_span_bins: 200, threshold_sigma: 2.0, follower_max_dev: 0.5 }
     });
     await waitForAnalysisJob(res.job_id);
-    location.href = `explorer.html?session=${res.session_id}`;
+    location.href = `explorer.html?analysis=${res.analysis_id}`;
   } finally {
     btn.disabled = false;
   }

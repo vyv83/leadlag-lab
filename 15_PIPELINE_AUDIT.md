@@ -22,7 +22,7 @@
 │   │   ✓ OK (Phase 1: PATCH /api/venues/{name})
 │   │
 │   ├── 1.2 Запустить collector
-│   │   collector.html → duration, rotation_s, bin_size_ms → [Start]
+│   │   collector.html → duration, rotation_s → [Start]
 │   │   sidebar badge: Collector ● live
 │   │   ✓ OK
 │   │
@@ -52,7 +52,7 @@
 │   │
 │   ├── 2.2 После создания
 │   │   ⚠ ТУПИК: куда попадает пользователь?
-│   │   → FIX: auto-navigate → quality.html?session=X
+│   │   → FIX: auto-navigate → quality.html?analysis=X
 │   │          sidebar refresh → Analysis появляется под Recording
 │   │
 │   ├── 2.3 Создать ещё один Analysis (другие параметры)
@@ -62,7 +62,7 @@
 │   │   ✓ OK (можно сравнивать сколько events при разных threshold)
 │   │
 │   └── 2.4 Удалить Analysis
-│       sidebar → [×] на Analysis → quality.html?session=X&confirm_delete=1
+│       sidebar → [×] на Analysis → quality.html?analysis=X&confirm_delete=1
 │       danger strip: "Removes: N backtests + MC. Recording remains."
 │       ⚠ EDGE CASE: если идёт анализ (in progress) — блокировать
 │       → FIX: API проверяет статус перед удалением
@@ -72,13 +72,13 @@
 ├── [3] ПРОВЕРКА КАЧЕСТВА ДАННЫХ
 │   │
 │   ├── 3.1 Открыть Quality
-│   │   sidebar → [Q] на Analysis → quality.html?session=X
+│   │   sidebar → [Q] на Analysis → quality.html?analysis=X
 │   │   page title: "Analysis · Apr 19 · 165 events"
 │   │   ✓ OK
 │   │
 │   ├── 3.2 Качество хорошее
 │   │   recommendations: все "safe"
-│   │   → [→ Explore Events] CTA → explorer.html?session=X
+│   │   → [→ Explore Events] CTA → explorer.html?analysis=X
 │   │   ✓ OK (кнопка нужна, сейчас, возможно, её нет явно)
 │   │   → FIX: убедиться что CTA "Explore Events →" присутствует
 │   │
@@ -103,7 +103,7 @@
 ├── [4] ИССЛЕДОВАНИЕ СОБЫТИЙ
 │   │
 │   ├── 4.1 Открыть Explorer
-│   │   sidebar → [E] на Analysis → explorer.html?session=X
+│   │   sidebar → [E] на Analysis → explorer.html?analysis=X
 │   │   page title: "Analysis · Apr 19 · 165 events"
 │   │   ✓ OK
 │   │
@@ -180,7 +180,7 @@
 │   │
 │   ├── 6.1 Запустить backtest
 │   │   ─── Путь A: из Explorer (analysis-centric) ───
-│   │   explorer.html?session=X → Run Backtest → radio стратегий → [▶ Run]
+│   │   explorer.html?analysis=X → Run Backtest → radio стратегий → [▶ Run]
 │   │   ✓ OK
 │   │
 │   │   ─── Путь B: из Strategy detail (strategy-centric) ───
@@ -340,7 +340,7 @@
 | T13 | paper.html | Нет ссылки на backtest для сравнения | "Compare with: [bt_xxx →]" из strategy metadata |
 | T14 | paper.html: drift | Нет инструментов анализа | Paper trade inspector + comparison chart |
 | T15 | Delete strategy: paper running | Cascade ломает running paper | API 409 + "Stop paper first →" в danger strip |
-| T16 | Analysis создан | Нет auto-navigate | Auto → quality.html?session=X после создания |
+| T16 | Analysis создан | Нет auto-navigate | Auto → quality.html?analysis=X после создания |
 
 ---
 

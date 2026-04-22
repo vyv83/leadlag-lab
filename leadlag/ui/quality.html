@@ -13,8 +13,15 @@
   <div class="toolbar">
     <button id="onlyBad">Show only bad/warning</button>
     <button id="showAll">Show all</button>
-    <a id="explorerLink" class="button-link" href="#">Open Session in Explorer</a>
+    <a id="explorerLink" class="button-link" href="#">Open Analysis in Explorer</a>
     <button id="exportReport">Export report</button>
+  </div>
+  <div id="qualityDeleteConfirm" class="banner" hidden style="margin-top:8px">
+    <div id="qualityDeleteText">Delete analysis?</div>
+    <div class="action-group" style="margin-top:8px">
+      <button id="qualityDeleteConfirmBtn" class="button-danger">Confirm Delete</button>
+      <button id="qualityDeleteCancelBtn" class="button-secondary">Cancel</button>
+    </div>
   </div>
   <div id="cards" class="cards"></div>
 </section>
@@ -71,22 +78,24 @@
 let payload = {};
 let rows = [];
 let badOnly = false;
-let currentSessionId = "";
+let currentAnalysisId = "";
+let currentMeta = {};
 
 async function init() {
-  currentSessionId = qs("session");
-  if (!currentSessionId) {
+  currentAnalysisId = qs("analysis");
+  if (!currentAnalysisId) {
     document.getElementById("cards").innerHTML = `<div class="banner">Select an Analysis from the sidebar [Q] to view quality.</div>`;
     return;
   }
-  await load(currentSessionId);
+  await load(currentAnalysisId);
 }
 
 async function load(id) {
-  payload = await fetchJSON(`/api/sessions/${id}/quality`);
+  payload = await fetchJSON(`/api/analyses/${id}/quality`);
   const q = payload.quality || {};
   const meta = payload.meta || {};
-  document.getElementById("explorerLink").href = `explorer.html?session=${id}`;
+  currentMeta = meta;
+  document.getElementById("explorerLink").href = `explorer.html?analysis=${id}`;
   rows = Object.entries(q.venues || {}).map(([venue, value]) => ({ venue, ...value }));
   renderCards(q, meta);
   renderVenueTable();
@@ -105,8 +114,13 @@ function renderPageTitle(id, q, meta) {
   const nEv = (meta.n_events || 0);
   const durH = q.duration_s ? `${(q.duration_s / 3600).toFixed(1)}h` : "";
   const metaParts = [dateStr, `${nEv} events`, durH].filter(Boolean);
-  const actions = `<a href="explorer.html?session=${encodeURIComponent(id)}" class="button-link">→ Explore Events</a>`;
+  const actions = `
+    <button id="qualityDeleteAction" class="button-danger">Delete Analysis</button>
+    <a href="explorer.html?analysis=${encodeURIComponent(id)}" class="button-link">→ Explore Events</a>
+  `;
   window.insertPageTitle("Analysis", metaParts.join(" · "), actions);
+  const deleteBtn = document.getElementById("qualityDeleteAction");
+  if (deleteBtn) deleteBtn.onclick = () => toggleDeleteAnalysis();
 }
 
 function renderCards(q, meta) {
@@ -114,7 +128,7 @@ function renderCards(q, meta) {
   const warn = rows.filter(r => r.flag === "warning").length;
   const bad = rows.filter(r => r.flag === "bad").length;
   fillCards("cards", [
-    ["Analysis", meta.session_id || currentSessionId],
+    ["Analysis", meta.analysis_id || currentAnalysisId],
     ["Time range", `${utc(q.t_start_ms)} → ${utc(q.t_end_ms)}`],
     ["Duration", `${fmt(q.duration_s, 0)}s`],
     ["Venues", rows.length],
@@ -232,7 +246,7 @@ function renderBbo() {
   ]);
 }
 
-function renderQualityDecision(sessionId) {
+function renderQualityDecision(analysisId) {
   const strip = document.getElementById("qualityDecision");
   if (!rows.length) { strip.hidden = true; return; }
   strip.hidden = false;
@@ -252,11 +266,50 @@ function renderQualityDecision(sessionId) {
   }
   document.getElementById("qdMsg").textContent = msg;
   document.getElementById("qdMsg").className = cls;
-  document.getElementById("qdExplorer").href = `explorer.html?session=${sessionId}`;
+  document.getElementById("qdExplorer").href = `explorer.html?analysis=${analysisId}`;
+}
+
+function toggleDeleteAnalysis(force) {
+  const box = document.getElementById("qualityDeleteConfirm");
+  if (!box) return;
+  const nextHidden = typeof force === "boolean" ? !force : !box.hidden;
+  box.hidden = nextHidden;
+  if (!nextHidden) {
+    document.getElementById("qualityDeleteText").textContent =
+      `Delete analysis "${currentAnalysisId}"? Related backtests and Monte Carlo results will also be removed.`;
+  }
+}
+
+async function confirmDeleteAnalysis() {
+  const box = document.getElementById("qualityDeleteConfirm");
+  const confirmBtn = document.getElementById("qualityDeleteConfirmBtn");
+  const cancelBtn = document.getElementById("qualityDeleteCancelBtn");
+  confirmBtn.disabled = true;
+  cancelBtn.disabled = true;
+  try {
+    const res = await apiFetch(`/api/analyses/${currentAnalysisId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `DELETE failed with ${res.status}`);
+    }
+    if (typeof refreshSidebar === "function") await refreshSidebar(true);
+    const recordingId = currentMeta.recording_id || currentMeta.collection_id;
+    location.href = recordingId
+      ? `recordings.html?id=${encodeURIComponent(recordingId)}`
+      : "recordings.html";
+  } catch (err) {
+    box.hidden = false;
+    document.getElementById("qualityDeleteText").textContent = `Delete failed: ${err.message || err}`;
+  } finally {
+    confirmBtn.disabled = false;
+    cancelBtn.disabled = false;
+  }
 }
 
 document.getElementById("onlyBad").onclick = () => { badOnly = true; renderVenueTable(); };
 document.getElementById("showAll").onclick = () => { badOnly = false; renderVenueTable(); };
+document.getElementById("qualityDeleteCancelBtn").onclick = () => toggleDeleteAnalysis(false);
+document.getElementById("qualityDeleteConfirmBtn").onclick = confirmDeleteAnalysis;
 function qualityHint(r) {
   const disableLink = `<a href="collector.html?action=disable&venue=${encodeURIComponent(r.venue)}" style="margin-left:4px;font-size:10px">Disable in Collector →</a>`;
   if (r.flag === "bad") {
@@ -275,13 +328,18 @@ document.getElementById("exportReport").onclick = () => {
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `${currentSessionId}_quality.json`;
+  a.download = `${currentAnalysisId}_quality.json`;
   a.click();
   URL.revokeObjectURL(a.href);
 };
 
 (async () => {
-  try { await init(); } catch (err) { showError("main", err); }
+  try {
+    await init();
+    if (qs("confirm_delete") === "1" && currentAnalysisId) {
+      toggleDeleteAnalysis(true);
+    }
+  } catch (err) { showError("main", err); }
 })();
 </script>
 </body>

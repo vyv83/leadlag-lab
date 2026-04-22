@@ -1,0 +1,904 @@
+{
+  "duration_s": 14500.094,
+  "t_start_ms": 1776585825491,
+  "t_end_ms": 1776600325585,
+  "coverage_pct": {
+    "OKX Perp": 20.231929434969416,
+    "Bybit Perp": 9.654761001648264,
+    "Binance Perp": 21.7198502079296,
+    "Binance Spot": 20.33537699740002,
+    "Bitget Perp": 9.25993613837146,
+    "Bybit Spot": 4.290660064413348,
+    "Gate Perp": 9.352694119350902,
+    "Hyperliquid Perp": 5.789270418824698,
+    "Lighter Perp": 11.383369769863656,
+    "MEXC Perp": 15.554030661857505,
+    "edgeX Perp": 3.419631588747664
+  },
+  "sigma_per_venue": {
+    "OKX Perp": 0.00010265886992710903,
+    "Bybit Perp": 0.00010453594292091884,
+    "Binance Perp": 8.800823917075171e-05,
+    "Binance Spot": 8.226161193341993e-05,
+    "Bitget Perp": 9.752951685559006e-05,
+    "Bybit Spot": 8.751484616068838e-05,
+    "Gate Perp": 0.00011439277936141232,
+    "Hyperliquid Perp": 8.837026991467116e-05,
+    "Lighter Perp": 0.00018062377623175534,
+    "MEXC Perp": 9.931307183992496e-05,
+    "edgeX Perp": 0.00012623342159596895
+  },
+  "venues": {
+    "OKX Perp": {
+      "role": "leader",
+      "ticks_total": 190936,
+      "ticks_per_s_avg": 13.16791463558788,
+      "ticks_per_s_max": 12940.0,
+      "ticks_per_s_min_nonzero": 20.0,
+      "bin_coverage_pct": 20.231929434969416,
+      "bbo_total": 281071,
+      "bbo_per_s_avg": 19.384081234232,
+      "bbo_coverage_pct": 100.0,
+      "bbo_available": true,
+      "median_price": 75185.29999999999,
+      "price_deviation_from_leader_bps": 0.07315313278136304,
+      "reconnects": 0,
+      "downtime_s": 46.335,
+      "uptime_pct": 99.68045034742534,
+      "zero_price_ticks": 0,
+      "zero_qty_ticks": 0,
+      "side_buy_pct": 0.5081440901663384,
+      "side_sell_pct": 0.49185590983366156,
+      "flag": "good",
+      "flag_reasons": [],
+      "sigma": 0.00010265886992710903,
+      "bbo_median_spread_bps": 0.013301896518670312,
+      "bbo_mean_spread_bps": 0.013363752944565507,
+      "bbo_max_spread_bps": 1.4246635896592175,
+      "bbo_p95_spread_bps": 0.013339513975584789,
+      "bbo_p99_spread_bps": 0.013345780498721241,
+      "bbo_pct_above_5bps": 0.0
+    },
+    "Bybit Perp": {
+      "role": "leader",
+      "ticks_total": 145428,
+      "ticks_per_s_avg": 10.029452222861453,
+      "ticks_per_s_max": 13760.0,
+      "ticks_per_s_min_nonzero": 20.0,
+      "bin_coverage_pct": 9.654761001648264,
+      "bbo_total": 202601,
+      "bbo_per_s_avg": 13.972392178974841,
+      "bbo_coverage_pct": 100.0,
+      "bbo_available": true,
+      "median_price": 75184.55,
+      "price_deviation_from_leader_bps": -0.026601139193398876,
+      "reconnects": 0,
+      "downtime_s": 102.668,
+      "uptime_pct": 99.29194941770723,
+      "zero_price_ticks": 0,
+      "zero_qty_ticks": 0,
+      "side_buy_pct": 0.5311631872816789,
+      "side_sell_pct": 0.4688368127183211,
+      "flag": "good",
+      "flag_reasons": [],
+      "sigma": 0.00010453594292091884,
+      "bbo_median_spread_bps": 0.013302622012150465,
+      "bbo_mean_spread_bps": 0.013702343506231483,
+      "bbo_max_spread_bps": 3.005526977930099,
+      "bbo_p95_spread_bps": 0.013341614029216903,
+      "bbo_p99_spread_bps": 0.013347401495285465,
+      "bbo_pct_above_5bps": 0.0
+    },
+    "Binance Perp": {
+      "role": "follower",
+      "ticks_total": 302146,
+      "ticks_per_s_avg": 20.83752008780081,
+      "ticks_per_s_max": 12220.0,
+      "ticks_per_s_min_nonzero": 20.0,
+      "bin_coverage_pct": 21.7198502079296,
+      "bbo_total": 3440916,
+      "bbo_per_s_avg": 237.30301334598246,
+      "bbo_coverage_pct": 100.0,
+      "bbo_available": true,
+      "median_price": 75177.1,
+      "price_deviation_from_leader_bps": -1.0174935741615392,
+      "reconnects": 0,
+      "downtime_s": 36.028999999999996,
+      "uptime_pct": 99.75152574872963,
+      "zero_price_ticks": 0,
+      "zero_qty_ticks": 0,
+      "side_buy_pct": 0.5205993129149484,
+      "side_sell_pct": 0.4794006870850516,
+      "flag": "good",
+      "flag_reasons": [],
+      "sigma": 8.800823917075171e-05,
+      "bbo_median_spread_bps": 0.013304285643787168,
+      "bbo_mean_spread_bps": 0.013622456027592548,
+      "bbo_max_spread_bps": 3.9447311185985834,
+      "bbo_p95_spread_bps": 0.013342949152798886,
+      "bbo_p99_spread_bps": 0.013348399225428279,
+      "bbo_pct_above_5bps": 0.0
+    },
+    "Binance Spot": {
+      "role": "follower",
+      "ticks_total": 149598,
+      "ticks_per_s_avg": 10.317036565418128,
+      "ticks_per_s_max": 7880.0,
+      "ticks_per_s_min_nonzero": 20.0,
+      "bin_coverage_pct": 20.33537699740002,
+      "bbo_total": 1100982,
+      "bbo_per_s_avg": 75.92930087211849,
+      "bbo_coverage_pct": 100.0,
+      "bbo_available": true,
+      "median_price": 75209.37,
+      "price_deviation_from_leader_bps": 3.274600234754434,
+      "reconnects": 0,
+      "downtime_s": 36.339,
+      "uptime_pct": 99.74938783155474,
+      "zero_price_ticks": 0,
+      "zero_qty_ticks": 0,
+      "side_buy_pct": 0.5562708057594353,
+      "side_sell_pct": 0.44372919424056473,
+      "flag": "good",
+      "flag_reasons": [],
+      "sigma": 8.226161193341993e-05,
+      "bbo_median_spread_bps": 0.00132987662864323,
+      "bbo_mean_spread_bps": 0.001490661441521159,
+      "bbo_max_spread_bps": 1.467692177354091,
+      "bbo_p95_spread_bps": 0.0013335761343366219,
+      "bbo_p99_spread_bps": 0.0013340490073992662,
+      "bbo_pct_above_5bps": 0.0
+    },
+    "Bitget Perp": {
+      "role": "follower",
+      "ticks_total": 109941,
+      "ticks_per_s_avg": 7.582088778183094,
+      "ticks_per_s_max": 7240.0,
+      "ticks_per_s_min_nonzero": 20.0,
+      "bin_coverage_pct": 9.25993613837146,
+      "bbo_total": 242814,
+      "bbo_per_s_avg": 16.745684545217433,
+      "bbo_coverage_pct": 100.0,
+      "bbo_available": true,
+      "median_price": 75191.4,
+      "price_deviation_from_leader_bps": 0.8844878781926095,
+      "reconnects": 0,
+      "downtime_s": 57.053000000000004,
+      "uptime_pct": 99.60653358523055,
+      "zero_price_ticks": 0,
+      "zero_qty_ticks": 0,
+      "side_buy_pct": 0.5347595528510747,
+      "side_sell_pct": 0.4652404471489253,
+      "flag": "good",
+      "flag_reasons": [],
+      "sigma": 9.752951685559006e-05,
+      "bbo_median_spread_bps": 0.013302622012150465,
+      "bbo_mean_spread_bps": 0.01344813162080744,
+      "bbo_max_spread_bps": 2.121670461876208,
+      "bbo_p95_spread_bps": 0.013341507230872884,
+      "bbo_p99_spread_bps": 0.01334699175567274,
+      "bbo_pct_above_5bps": 0.0
+    },
+    "Bybit Spot": {
+      "role": "follower",
+      "ticks_total": 87806,
+      "ticks_per_s_avg": 6.055546950247358,
+      "ticks_per_s_max": 3080.0,
+      "ticks_per_s_min_nonzero": 20.0,
+      "bin_coverage_pct": 4.290660064413348,
+      "bbo_total": 350125,
+      "bbo_per_s_avg": 24.146395188886363,
+      "bbo_coverage_pct": 100.0,
+      "bbo_available": true,
+      "median_price": 75219.45,
+      "price_deviation_from_leader_bps": 4.615297650121479,
+      "reconnects": 0,
+      "downtime_s": 622.545,
+      "uptime_pct": 95.7066140398814,
+      "zero_price_ticks": 0,
+      "zero_qty_ticks": 0,
+      "side_buy_pct": 0.5193153087488327,
+      "side_sell_pct": 0.48068469125116736,
+      "flag": "warning",
+      "flag_reasons": [
+        "bin_coverage_lt_5pct"
+      ],
+      "sigma": 8.751484616068838e-05,
+      "bbo_median_spread_bps": 0.013297828132994339,
+      "bbo_mean_spread_bps": 0.013695469753648347,
+      "bbo_max_spread_bps": 3.4623272165552508,
+      "bbo_p95_spread_bps": 0.013334729033808054,
+      "bbo_p99_spread_bps": 0.013340225784097886,
+      "bbo_pct_above_5bps": 0.0
+    },
+    "Gate Perp": {
+      "role": "follower",
+      "ticks_total": 68806,
+      "ticks_per_s_avg": 4.745210617255309,
+      "ticks_per_s_max": 2680.0,
+      "ticks_per_s_min_nonzero": 20.0,
+      "bin_coverage_pct": 9.352694119350902,
+      "bbo_total": 0,
+      "bbo_per_s_avg": 0.0,
+      "bbo_coverage_pct": 0.0,
+      "bbo_available": false,
+      "median_price": 75181.9,
+      "price_deviation_from_leader_bps": -0.3790662335122243,
+      "reconnects": 0,
+      "downtime_s": 92.632,
+      "uptime_pct": 99.36116276211726,
+      "zero_price_ticks": 0,
+      "zero_qty_ticks": 0,
+      "side_buy_pct": 0.5167427259250646,
+      "side_sell_pct": 0.48325727407493535,
+      "flag": "good",
+      "flag_reasons": [],
+      "sigma": 0.00011439277936141232,
+      "bbo_median_spread_bps": null,
+      "bbo_mean_spread_bps": null,
+      "bbo_max_spread_bps": null,
+      "bbo_p95_spread_bps": null,
+      "bbo_p99_spread_bps": null,
+      "bbo_pct_above_5bps": null
+    },
+    "Hyperliquid Perp": {
+      "role": "follower",
+      "ticks_total": 51622,
+      "ticks_per_s_avg": 3.560114851669238,
+      "ticks_per_s_max": 7560.0,
+      "ticks_per_s_min_nonzero": 20.0,
+      "bin_coverage_pct": 5.789270418824698,
+      "bbo_total": 0,
+      "bbo_per_s_avg": 0.0,
+      "bbo_coverage_pct": 0.0,
+      "bbo_available": false,
+      "median_price": 75188.0,
+      "price_deviation_from_leader_bps": 0.4322685118990221,
+      "reconnects": 0,
+      "downtime_s": 73.637,
+      "uptime_pct": 99.49216191288139,
+      "zero_price_ticks": 0,
+      "zero_qty_ticks": 0,
+      "side_buy_pct": 0.6071636124133122,
+      "side_sell_pct": 0.3928363875866878,
+      "flag": "good",
+      "flag_reasons": [],
+      "sigma": 8.837026991467116e-05,
+      "bbo_median_spread_bps": null,
+      "bbo_mean_spread_bps": null,
+      "bbo_max_spread_bps": null,
+      "bbo_p95_spread_bps": null,
+      "bbo_p99_spread_bps": null,
+      "bbo_pct_above_5bps": null
+    },
+    "Lighter Perp": {
+      "role": "follower",
+      "ticks_total": 82226,
+      "ticks_per_s_avg": 5.67072185876864,
+      "ticks_per_s_max": 2200.0,
+      "ticks_per_s_min_nonzero": 20.0,
+      "bin_coverage_pct": 11.383369769863656,
+      "bbo_total": 1419675,
+      "bbo_per_s_avg": 97.90798597581507,
+      "bbo_coverage_pct": 100.0,
+      "bbo_available": true,
+      "median_price": 75171.45,
+      "price_deviation_from_leader_bps": -1.7689757563871542,
+      "reconnects": 0,
+      "downtime_s": 67.687,
+      "uptime_pct": 99.5331961296251,
+      "zero_price_ticks": 0,
+      "zero_qty_ticks": 0,
+      "side_buy_pct": 0.59955488531608,
+      "side_sell_pct": 0.4004451146839199,
+      "flag": "good",
+      "flag_reasons": [],
+      "sigma": 0.00018062377623175534,
+      "bbo_median_spread_bps": 0.01334927236531362,
+      "bbo_mean_spread_bps": 0.18628986424490163,
+      "bbo_max_spread_bps": 3.4944096114932854,
+      "bbo_p95_spread_bps": 0.6653179341550802,
+      "bbo_p99_spread_bps": 0.8523414809308575,
+      "bbo_pct_above_5bps": 0.0
+    },
+    "MEXC Perp": {
+      "role": "follower",
+      "ticks_total": 109778,
+      "ticks_per_s_avg": 7.570847471747425,
+      "ticks_per_s_max": 5760.0,
+      "ticks_per_s_min_nonzero": 20.0,
+      "bin_coverage_pct": 15.554030661857505,
+      "bbo_total": 0,
+      "bbo_per_s_avg": 0.0,
+      "bbo_coverage_pct": 0.0,
+      "bbo_available": false,
+      "median_price": 75171.54999999999,
+      "price_deviation_from_leader_bps": -1.7556751867914226,
+      "reconnects": 0,
+      "downtime_s": 36.275,
+      "uptime_pct": 99.74982920800376,
+      "zero_price_ticks": 0,
+      "zero_qty_ticks": 0,
+      "side_buy_pct": 0.5177995591102043,
+      "side_sell_pct": 0.48220044088979575,
+      "flag": "good",
+      "flag_reasons": [],
+      "sigma": 9.931307183992496e-05,
+      "bbo_median_spread_bps": null,
+      "bbo_mean_spread_bps": null,
+      "bbo_max_spread_bps": null,
+      "bbo_p95_spread_bps": null,
+      "bbo_p99_spread_bps": null,
+      "bbo_pct_above_5bps": null
+    },
+    "edgeX Perp": {
+      "role": "follower",
+      "ticks_total": 10308,
+      "ticks_per_s_avg": 0.7108919431832649,
+      "ticks_per_s_max": 520.0,
+      "ticks_per_s_min_nonzero": 20.0,
+      "bin_coverage_pct": 3.419631588747664,
+      "bbo_total": 12445,
+      "bbo_per_s_avg": 0.8582702981097916,
+      "bbo_coverage_pct": 100.0,
+      "bbo_available": true,
+      "median_price": 75165.6,
+      "price_deviation_from_leader_bps": -2.547059077804233,
+      "reconnects": 0,
+      "downtime_s": 58.701,
+      "uptime_pct": 99.5951681416686,
+      "zero_price_ticks": 0,
+      "zero_qty_ticks": 0,
+      "side_buy_pct": 0.5238649592549476,
+      "side_sell_pct": 0.47613504074505236,
+      "flag": "warning",
+      "flag_reasons": [
+        "bin_coverage_lt_5pct",
+        "ticks_per_s_lt_1"
+      ],
+      "sigma": 0.00012623342159596895,
+      "bbo_median_spread_bps": 0.22646420766462647,
+      "bbo_mean_spread_bps": 0.25876870771457355,
+      "bbo_max_spread_bps": 3.2165939182532917,
+      "bbo_p95_spread_bps": 0.412191151756496,
+      "bbo_p99_spread_bps": 0.8874523384934976,
+      "bbo_pct_above_5bps": 0.0
+    }
+  },
+  "timeline_gaps": [
+    {
+      "venue": "edgeX Perp",
+      "start_ms": 1776585838228,
+      "end_ms": 1776585860428,
+      "duration_s": 22.2
+    },
+    {
+      "venue": "Hyperliquid Perp",
+      "start_ms": 1776585838372,
+      "end_ms": 1776585860895,
+      "duration_s": 22.523
+    },
+    {
+      "venue": "Gate Perp",
+      "start_ms": 1776585838400,
+      "end_ms": 1776585862324,
+      "duration_s": 23.924
+    },
+    {
+      "venue": "Bitget Perp",
+      "start_ms": 1776585838508,
+      "end_ms": 1776585861146,
+      "duration_s": 22.638
+    },
+    {
+      "venue": "Bybit Perp",
+      "start_ms": 1776585838625,
+      "end_ms": 1776585862721,
+      "duration_s": 24.096
+    },
+    {
+      "venue": "MEXC Perp",
+      "start_ms": 1776585838749,
+      "end_ms": 1776585860747,
+      "duration_s": 21.998
+    },
+    {
+      "venue": "Binance Spot",
+      "start_ms": 1776585838910,
+      "end_ms": 1776585860922,
+      "duration_s": 22.012
+    },
+    {
+      "venue": "Lighter Perp",
+      "start_ms": 1776585838979,
+      "end_ms": 1776585861797,
+      "duration_s": 22.818
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776585839038,
+      "end_ms": 1776585861849,
+      "duration_s": 22.811
+    },
+    {
+      "venue": "OKX Perp",
+      "start_ms": 1776585839055,
+      "end_ms": 1776585861077,
+      "duration_s": 22.022
+    },
+    {
+      "venue": "Binance Perp",
+      "start_ms": 1776585839116,
+      "end_ms": 1776585860895,
+      "duration_s": 21.779
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776585869931,
+      "end_ms": 1776585881722,
+      "duration_s": 11.791
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776586228713,
+      "end_ms": 1776586239456,
+      "duration_s": 10.743
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776586264637,
+      "end_ms": 1776586274861,
+      "duration_s": 10.224
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776586563730,
+      "end_ms": 1776586579278,
+      "duration_s": 15.548
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776586868551,
+      "end_ms": 1776586889638,
+      "duration_s": 21.087
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776587153558,
+      "end_ms": 1776587165086,
+      "duration_s": 11.528
+    },
+    {
+      "venue": "Bybit Perp",
+      "start_ms": 1776587243471,
+      "end_ms": 1776587254680,
+      "duration_s": 11.209
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776587250722,
+      "end_ms": 1776587262701,
+      "duration_s": 11.979
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776587267711,
+      "end_ms": 1776587277966,
+      "duration_s": 10.255
+    },
+    {
+      "venue": "Hyperliquid Perp",
+      "start_ms": 1776587658357,
+      "end_ms": 1776587668971,
+      "duration_s": 10.614
+    },
+    {
+      "venue": "Bybit Perp",
+      "start_ms": 1776587658882,
+      "end_ms": 1776587668968,
+      "duration_s": 10.086
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776587658904,
+      "end_ms": 1776587668948,
+      "duration_s": 10.044
+    },
+    {
+      "venue": "Bitget Perp",
+      "start_ms": 1776587658943,
+      "end_ms": 1776587668965,
+      "duration_s": 10.022
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776587668951,
+      "end_ms": 1776587681921,
+      "duration_s": 12.97
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776587799368,
+      "end_ms": 1776587816476,
+      "duration_s": 17.108
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776588874442,
+      "end_ms": 1776588885627,
+      "duration_s": 11.185
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776588906927,
+      "end_ms": 1776588919267,
+      "duration_s": 12.34
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776588946565,
+      "end_ms": 1776588960025,
+      "duration_s": 13.46
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776588976341,
+      "end_ms": 1776588990143,
+      "duration_s": 13.802
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776589224843,
+      "end_ms": 1776589234881,
+      "duration_s": 10.038
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776589369547,
+      "end_ms": 1776589380898,
+      "duration_s": 11.351
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776589467138,
+      "end_ms": 1776589478466,
+      "duration_s": 11.328
+    },
+    {
+      "venue": "edgeX Perp",
+      "start_ms": 1776589467226,
+      "end_ms": 1776589478468,
+      "duration_s": 11.242
+    },
+    {
+      "venue": "Gate Perp",
+      "start_ms": 1776589467745,
+      "end_ms": 1776589478469,
+      "duration_s": 10.724
+    },
+    {
+      "venue": "Bybit Perp",
+      "start_ms": 1776589468127,
+      "end_ms": 1776589478429,
+      "duration_s": 10.302
+    },
+    {
+      "venue": "Hyperliquid Perp",
+      "start_ms": 1776589468304,
+      "end_ms": 1776589478469,
+      "duration_s": 10.165
+    },
+    {
+      "venue": "Lighter Perp",
+      "start_ms": 1776589468339,
+      "end_ms": 1776589478457,
+      "duration_s": 10.118
+    },
+    {
+      "venue": "Bitget Perp",
+      "start_ms": 1776589468441,
+      "end_ms": 1776589478456,
+      "duration_s": 10.015
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776590050659,
+      "end_ms": 1776590066504,
+      "duration_s": 15.845
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776590762855,
+      "end_ms": 1776590774887,
+      "duration_s": 12.032
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776590981895,
+      "end_ms": 1776590996206,
+      "duration_s": 14.311
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776591112612,
+      "end_ms": 1776591125816,
+      "duration_s": 13.204
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776591133881,
+      "end_ms": 1776591149198,
+      "duration_s": 15.317
+    },
+    {
+      "venue": "edgeX Perp",
+      "start_ms": 1776591277218,
+      "end_ms": 1776591287614,
+      "duration_s": 10.396
+    },
+    {
+      "venue": "Lighter Perp",
+      "start_ms": 1776591277310,
+      "end_ms": 1776591287593,
+      "duration_s": 10.283
+    },
+    {
+      "venue": "Bybit Perp",
+      "start_ms": 1776591277399,
+      "end_ms": 1776591287626,
+      "duration_s": 10.227
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776591769666,
+      "end_ms": 1776591781625,
+      "duration_s": 11.959
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776591928737,
+      "end_ms": 1776591939703,
+      "duration_s": 10.966
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776592603398,
+      "end_ms": 1776592615973,
+      "duration_s": 12.575
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776592617261,
+      "end_ms": 1776592634433,
+      "duration_s": 17.172
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776593034026,
+      "end_ms": 1776593046110,
+      "duration_s": 12.084
+    },
+    {
+      "venue": "Hyperliquid Perp",
+      "start_ms": 1776593083851,
+      "end_ms": 1776593096614,
+      "duration_s": 12.763
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776593085793,
+      "end_ms": 1776593096615,
+      "duration_s": 10.822
+    },
+    {
+      "venue": "Lighter Perp",
+      "start_ms": 1776593086293,
+      "end_ms": 1776593096579,
+      "duration_s": 10.286
+    },
+    {
+      "venue": "OKX Perp",
+      "start_ms": 1776593086566,
+      "end_ms": 1776593096588,
+      "duration_s": 10.022
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776593147509,
+      "end_ms": 1776593159106,
+      "duration_s": 11.597
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776593443118,
+      "end_ms": 1776593454100,
+      "duration_s": 10.982
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776593780631,
+      "end_ms": 1776593794904,
+      "duration_s": 14.273
+    },
+    {
+      "venue": "Gate Perp",
+      "start_ms": 1776594006611,
+      "end_ms": 1776594017205,
+      "duration_s": 10.594
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776594481788,
+      "end_ms": 1776594494920,
+      "duration_s": 13.132
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776594892145,
+      "end_ms": 1776594904870,
+      "duration_s": 12.725
+    },
+    {
+      "venue": "Gate Perp",
+      "start_ms": 1776595164848,
+      "end_ms": 1776595175668,
+      "duration_s": 10.82
+    },
+    {
+      "venue": "Gate Perp",
+      "start_ms": 1776595191866,
+      "end_ms": 1776595203635,
+      "duration_s": 11.769
+    },
+    {
+      "venue": "Bybit Perp",
+      "start_ms": 1776595272278,
+      "end_ms": 1776595284440,
+      "duration_s": 12.162
+    },
+    {
+      "venue": "Bybit Perp",
+      "start_ms": 1776595693799,
+      "end_ms": 1776595704022,
+      "duration_s": 10.223
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776596286353,
+      "end_ms": 1776596299342,
+      "duration_s": 12.989
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776596573505,
+      "end_ms": 1776596594805,
+      "duration_s": 21.3
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776596602206,
+      "end_ms": 1776596616450,
+      "duration_s": 14.244
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776596666539,
+      "end_ms": 1776596680606,
+      "duration_s": 14.067
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776596700887,
+      "end_ms": 1776596712131,
+      "duration_s": 11.244
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776596742934,
+      "end_ms": 1776596762002,
+      "duration_s": 19.068
+    },
+    {
+      "venue": "Gate Perp",
+      "start_ms": 1776598142530,
+      "end_ms": 1776598152958,
+      "duration_s": 10.428
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776598213422,
+      "end_ms": 1776598224793,
+      "duration_s": 11.371
+    },
+    {
+      "venue": "Hyperliquid Perp",
+      "start_ms": 1776598508510,
+      "end_ms": 1776598526082,
+      "duration_s": 17.572
+    },
+    {
+      "venue": "edgeX Perp",
+      "start_ms": 1776598511217,
+      "end_ms": 1776598526080,
+      "duration_s": 14.863
+    },
+    {
+      "venue": "Bitget Perp",
+      "start_ms": 1776598511698,
+      "end_ms": 1776598526076,
+      "duration_s": 14.378
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776598511707,
+      "end_ms": 1776598526065,
+      "duration_s": 14.358
+    },
+    {
+      "venue": "Bybit Perp",
+      "start_ms": 1776598511709,
+      "end_ms": 1776598526072,
+      "duration_s": 14.363
+    },
+    {
+      "venue": "Gate Perp",
+      "start_ms": 1776598511710,
+      "end_ms": 1776598526083,
+      "duration_s": 14.373
+    },
+    {
+      "venue": "Binance Spot",
+      "start_ms": 1776598511718,
+      "end_ms": 1776598526045,
+      "duration_s": 14.327
+    },
+    {
+      "venue": "OKX Perp",
+      "start_ms": 1776598511749,
+      "end_ms": 1776598526040,
+      "duration_s": 14.291
+    },
+    {
+      "venue": "Binance Perp",
+      "start_ms": 1776598511772,
+      "end_ms": 1776598526022,
+      "duration_s": 14.25
+    },
+    {
+      "venue": "MEXC Perp",
+      "start_ms": 1776598511802,
+      "end_ms": 1776598526079,
+      "duration_s": 14.277
+    },
+    {
+      "venue": "Lighter Perp",
+      "start_ms": 1776598511831,
+      "end_ms": 1776598526013,
+      "duration_s": 14.182
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776598534690,
+      "end_ms": 1776598545976,
+      "duration_s": 11.286
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776598906315,
+      "end_ms": 1776598916347,
+      "duration_s": 10.032
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776598935557,
+      "end_ms": 1776598948909,
+      "duration_s": 13.352
+    },
+    {
+      "venue": "Bybit Spot",
+      "start_ms": 1776599072859,
+      "end_ms": 1776599083505,
+      "duration_s": 10.646
+    }
+  ]
+}

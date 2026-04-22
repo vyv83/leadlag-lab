@@ -1,6 +1,6 @@
 """Event-driven backtest engine.
 
-Consumes a Session (with vwap_df, optional bbo_df) and a Strategy, simulates
+Consumes an Analysis (with vwap_df, optional bbo_df) and a Strategy, simulates
 market or limit entries, walks forward bin-by-bin to resolve SL/TP/hold exits,
 and emits a BacktestResult conforming to plan.md §contract 5.
 
@@ -44,7 +44,7 @@ ENGINE_VERSION = "backtest.v2"
 @dataclass
 class BacktestResult:
     strategy_name: str
-    session_id: str
+    analysis_id: str
     params: dict
     trades: list[dict]
     equity: list[dict]
@@ -60,7 +60,7 @@ class BacktestResult:
             **self.meta,
             "backtest_id": backtest_id,
             "strategy_name": self.strategy_name,
-            "session_id": self.session_id,
+            "analysis_id": self.analysis_id,
             "params": self.params,
             "created_at": ts,
         }
@@ -138,7 +138,7 @@ def run_backtest(
 ) -> BacktestResult:
     t0 = time.perf_counter()
     if session.vwap_df is None:
-        raise ValueError("Session has no vwap_df artifact; rebuild/save the session with vwap.parquet before backtesting.")
+        raise ValueError("Analysis has no vwap_df artifact; rebuild/save the analysis with vwap.parquet before backtesting.")
 
     params = {**getattr(strategy, "params", {}), **(params_override or {})}
     original_params = dict(getattr(strategy, "params", {}) or {})
@@ -268,7 +268,7 @@ def run_backtest(
     }
     return BacktestResult(
         strategy_name=getattr(strategy, "name", strategy.__class__.__name__),
-        session_id=session.session_id,
+        analysis_id=session.analysis_id,
         params=params,
         trades=trades,
         equity=equity,

@@ -111,21 +111,19 @@ Acceptance:
 
 Проблема:
 
-- UI отправляет `bin_size_ms` и `rotation_s`;
-- backend игнорирует;
-- writer использует hardcoded rotation.
+- collector UI не должен смешивать raw collection и analysis params;
+- `rotation_s` относится к raw collection;
+- `bin_size_ms` относится к analysis и не должен выглядеть как параметр записи raw parquet.
 
-Сделать одно из двух:
+Сделать:
 
-- либо реально поддержать параметры;
-- либо убрать/disable поля в legacy UI.
-
-Preferred:
+- оставить в collector UI только реальные параметры raw collection;
+- `rotation_s` реально поддерживать в collector CLI/status;
+- `bin_size_ms` задавать только при создании Analysis.
 
 - `--rotation-s` в collector CLI;
 - writer_task принимает rotation;
-- status показывает фактическую rotation;
-- `bin_size_ms` сохраняется как analysis/default metadata, если collector его не использует напрямую.
+- status показывает фактическую rotation.
 
 Acceptance:
 
