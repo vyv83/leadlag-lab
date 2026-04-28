@@ -132,7 +132,7 @@ leadlag  [↺]                         ← logo → dashboard.html; [↺] = ру
 | Пункт | Почему убираем | Как теперь добраться |
 |---|---|---|
 | Explorer | всегда нужен контекст (какой Analysis?) | [E] кнопка на Analysis в дереве |
-| Quality | всегда нужен контекст | [Q] кнопка на Analysis в дереве |
+| Quality | всегда нужен recording context | [Q] кнопка на Analysis в дереве ведёт на owner page записи |
 | Recordings | → DATA заголовок | клик на "DATA ━━━" → recordings.html |
 | Strategies | → RESEARCH заголовок | клик на "RESEARCH ━━━" → strategy.html |
 | Backtests | всегда конкретный bt_id | → bt ссылки в дереве |
@@ -185,7 +185,7 @@ if (entityParam) {
 | **backtest.html** | таблица всех backtests | detail одного backtest |
 | **paper.html** | список всех paper sessions | detail+monitor одного |
 | **recordings.html** | список всех recordings | Recording Detail + create analysis |
-| **quality.html** | — (всегда с param) | quality одного Analysis |
+| **quality.html** | — (всегда с param) | quality данных одного Recording с optional reference Analysis |
 | **explorer.html** | — (всегда с param) | события одного Analysis |
 | **montecarlo.html** | — (всегда с param) | MC одного backtest |
 | **trade.html** | — (всегда с param) | detail одного trade |
@@ -217,8 +217,8 @@ if (entityParam) {
 ### Содержимое по страницам
 
 ```
-quality.html?analysis=X
-  "Analysis · Apr 19, 2026 · 165 events · 4.0h"   [Delete Analysis] [→ Explore Events]
+quality.html?id=REC_X
+  "Recording · Apr 19, 2026 · 4.0h · 11 venues"
 
 explorer.html?analysis=X
   "Analysis · Apr 19, 2026 · 165 events"           [Delete Analysis]
@@ -280,7 +280,7 @@ trade.html?id=X
 | **T10**: нет [→ Start Paper] в MC | montecarlo.html | добавить кнопку → paper.html?strategy=X |
 | **T11**: нет hint в MC low confidence | montecarlo.html | "Refine strategy [→ Jupyter ↗]" + "Run on more data [→ Recordings]" |
 | **T15**: delete strategy, paper running | app.py + danger strip | API 409 Conflict + "Stop paper trading first →" |
-| **T16**: нет auto-navigate после create analysis | recordings.html JS | после успешного POST → navigate quality.html?analysis=X |
+| **T16**: нет auto-navigate после create analysis | recordings.html JS | после успешного POST → navigate `quality.html?id=<recording_id>` |
 | **T5**: нет стратегий в Run Backtest | explorer.html | "No strategies yet — Open Jupyter ↗" вместо пустого radio |
 | **T6**: 30с задержка новой стратегии | sidebar.js | [↺ Refresh] кнопка в sidebar header |
 
@@ -438,11 +438,11 @@ const [collections, sessions, strategies, backtests, papers, notebooks, collStat
 **Delete flow из sidebar (без модалок):**
 
 ```js
-function handleDelete(type, id) {
+function handleDelete(type, id, recordingId) {
   // Не удаляем из sidebar — навигируем в content area с флагом
   const routes = {
     recording:  `recordings.html?id=${id}&confirm_delete=1`,
-    analysis:   `quality.html?analysis=${id}&confirm_delete=1`,
+    analysis:   `quality.html?id=${recordingId}`,
     strategy:   `strategy.html?strategy=${id}&confirm_delete=1`,
   };
   location.href = routes[type];
@@ -514,7 +514,7 @@ location.href = 'strategy.html';
 | Страница | Что упрощается |
 |---|---|
 | **recordings.html** | Убирается список recordings (теперь в sidebar). Остаётся как "Recording Detail" — детали + create analysis inline |
-| **quality.html** | Убирается analysis-picker dropdown (sidebar навигирует сразу на `quality.html?analysis=X`) |
+| **quality.html** | Убирается analysis-picker dropdown (sidebar навигирует сразу на `quality.html?id=<recording_id>`) |
 | **explorer.html** | Убирается session-picker dropdown (аналогично) |
 | **strategy.html** | Убирается strategy-picker dropdown если был. Sidebar подсвечивает активную стратегию |
 | **backtest.html** | Убирается backtest-picker если был |

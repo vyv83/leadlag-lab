@@ -142,8 +142,8 @@ Undo реализуется через soft-delete (5 сек window) на бэк
 
 ### quality.html (minor)
 
-- Rename "session" → "analysis" в лейблах
-- Добавить [Delete Analysis] → inline danger strip с cascade warning
+- Rename owner framing from "analysis" to "recording"; Quality больше не держит Analysis context
+- Не показывать [Delete Analysis] как owner-level action страницы; удаление Analysis живёт вне quality owner surface
 - Добавить кнопку [Re-analyze] → ведёт на recordings.html с нужным recording раскрытым
 
 ### explorer.html (add Run Backtest inline)
@@ -248,7 +248,7 @@ Dashboard | Collector | Recordings | Explorer | Quality | Strategies | Backtests
 ```
 
 Изменение: добавлен **Recordings** между Collector и Explorer.  
-Логика пайплайна: Collect → See Recordings → Explore Events → Check Quality → Strategy → Backtest → MC → Paper.
+Логика пайплайна: Collect → See Recordings → Check Quality → Explore Events → Strategy → Backtest → MC → Paper.
 
 > В Фазе 2 эта горизонтальная nav заменяется на left sidebar tree — см. 14_PHASE2_TREE_SIDEBAR.md.
 

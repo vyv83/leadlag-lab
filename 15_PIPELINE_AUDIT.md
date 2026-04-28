@@ -52,7 +52,7 @@
 │   │
 │   ├── 2.2 После создания
 │   │   ⚠ ТУПИК: куда попадает пользователь?
-│   │   → FIX: auto-navigate → quality.html?analysis=X
+│   │   → FIX: auto-navigate → quality.html?id=REC_X
 │   │          sidebar refresh → Analysis появляется под Recording
 │   │
 │   ├── 2.3 Создать ещё один Analysis (другие параметры)
@@ -62,7 +62,7 @@
 │   │   ✓ OK (можно сравнивать сколько events при разных threshold)
 │   │
 │   └── 2.4 Удалить Analysis
-│       sidebar → [×] на Analysis → quality.html?analysis=X&confirm_delete=1
+│       sidebar → [×] на Analysis → quality.html?id=REC_X
 │       danger strip: "Removes: N backtests + MC. Recording remains."
 │       ⚠ EDGE CASE: если идёт анализ (in progress) — блокировать
 │       → FIX: API проверяет статус перед удалением
@@ -72,8 +72,8 @@
 ├── [3] ПРОВЕРКА КАЧЕСТВА ДАННЫХ
 │   │
 │   ├── 3.1 Открыть Quality
-│   │   sidebar → [Q] на Analysis → quality.html?analysis=X
-│   │   page title: "Analysis · Apr 19 · 165 events"
+│   │   sidebar → [Q] на Analysis → quality.html?id=REC_X
+│   │   page title: "Recording · Apr 19 · 4.0h · 11 venues"
 │   │   ✓ OK
 │   │
 │   ├── 3.2 Качество хорошее
@@ -96,7 +96,7 @@
 │   │   → FIX: добавить ссылку в banner
 │   │
 │   └── 3.5 Удалить Analysis (плохие данные, не нужен)
-│       [Delete Analysis] кнопка в page header
+│       Delete action в selected Analysis context
 │       → danger strip inline → [Confirm] → navigate → recording detail
 │       ✓ OK
 │
@@ -340,7 +340,7 @@
 | T13 | paper.html | Нет ссылки на backtest для сравнения | "Compare with: [bt_xxx →]" из strategy metadata |
 | T14 | paper.html: drift | Нет инструментов анализа | Paper trade inspector + comparison chart |
 | T15 | Delete strategy: paper running | Cascade ломает running paper | API 409 + "Stop paper first →" в danger strip |
-| T16 | Analysis создан | Нет auto-navigate | Auto → quality.html?analysis=X после создания |
+| T16 | Analysis создан | Нет auto-navigate | Auto → `quality.html?id=<recording_id>` после создания |
 
 ---
 

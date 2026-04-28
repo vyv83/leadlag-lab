@@ -125,6 +125,6 @@
 | T10 | MC → нет [→ Start Paper] | `mcPaperLink.href = paper.html?strategy=X` | ✅ |
 | T11 | MC low confidence | `#mcLowConfHints` с двумя кнопками | ✅ |
 | T15 | delete strategy пока paper running | 409 + "Stop paper first" | ✅ (Batch 0.2) |
-| T16 | create analysis → куда? | auto-navigate `quality.html?analysis=X` | ✅ |
+| T16 | create analysis → куда? | auto-navigate `quality.html?id=<recording_id>` | ✅ |
 
 Оставшиеся тупики (T8, T12, T13, T14) — advanced features, не входили в Phase 2 scope.
