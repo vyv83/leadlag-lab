@@ -345,7 +345,7 @@
       analyses.forEach(session => {
         const sid = session.id;
         const anaRow = el("div", { className: "sb-item sb-i1" });
-        anaRow.appendChild(el("a", { href: `quality.html?analysis=${encodeURIComponent(sid)}`, title: sid },
+        anaRow.appendChild(el("a", { href: `quality.html?id=${encodeURIComponent(recId)}&analysis=${encodeURIComponent(sid)}`, title: sid },
           [sessionLabel(session)]));
         if ((active.page === "explorer" || active.page === "quality") && active.analysis === sid) {
           anaRow.classList.add("active");

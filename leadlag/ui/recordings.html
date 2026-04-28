@@ -91,7 +91,7 @@ function renderRecordings() {
         const tdActions = el("td");
         tdActions.style.whiteSpace = "nowrap";
         tdActions.innerHTML = `
-          <a href="quality.html?analysis=${a.id}" class="button-link">Quality</a>
+          <a href="quality.html?id=${encodeURIComponent(rec.id)}&analysis=${encodeURIComponent(a.id)}" class="button-link">Quality</a>
           <a href="explorer.html?analysis=${a.id}" class="button-link" style="margin-left:4px">Explore</a>
           <button class="button-danger button-compact" style="margin-left:4px" data-analysis-delete="${a.id}">Delete</button>
         `;
@@ -217,11 +217,11 @@ function renderRecordings() {
           progressFill,
           progressText,
           onComplete: async (job) => {
-            resultNode.innerHTML = `<a href="quality.html?analysis=${job.analysis_id}">${job.analysis_id}</a> — ${job.events_count || job.n_events || 0} events`;
+            resultNode.innerHTML = `<a href="quality.html?id=${encodeURIComponent(rec.id)}&analysis=${encodeURIComponent(job.analysis_id)}">${job.analysis_id}</a> — ${job.events_count || job.n_events || 0} events`;
             progressText.textContent = "Analysis ready. Opening quality page…";
             progressFill.style.width = "100%";
             await loadAll();
-            window.location.href = `quality.html?analysis=${encodeURIComponent(job.analysis_id)}`;
+            window.location.href = `quality.html?id=${encodeURIComponent(rec.id)}&analysis=${encodeURIComponent(job.analysis_id)}`;
           },
         });
       } catch (err) {

@@ -1,0 +1,1144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LeadLag Lab Menu Prototype</title>
+  <style>
+    :root {
+      --bg: #f5f1e8;
+      --panel: rgba(255, 252, 247, 0.86);
+      --panel-strong: #fffdf9;
+      --line: #ddd2c2;
+      --line-strong: #cabba7;
+      --text: #231f18;
+      --muted: #6f665d;
+      --soft: #8f8579;
+      --green: #2c8f5d;
+      --green-soft: #dff3e6;
+      --blue: #2d6dc4;
+      --blue-soft: #e5eefc;
+      --amber: #a66e11;
+      --amber-soft: #f6ead0;
+      --red: #b84d3d;
+      --red-soft: #f7e2de;
+      --shadow: 0 24px 60px rgba(54, 41, 24, 0.10);
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+      --radius-md: 14px;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      --sans: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(76, 143, 104, 0.14), transparent 32%),
+        radial-gradient(circle at 88% 8%, rgba(45, 109, 196, 0.10), transparent 26%),
+        linear-gradient(180deg, #faf7f1 0%, #f2ece1 100%);
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 420px minmax(0, 1fr);
+      min-height: 100vh;
+      gap: 20px;
+      padding: 20px;
+    }
+
+    .sidebar {
+      background: var(--panel);
+      backdrop-filter: blur(18px);
+      border: 1px solid rgba(202, 187, 167, 0.7);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .sidebar-header {
+      padding: 22px 22px 18px;
+      border-bottom: 1px solid rgba(202, 187, 167, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 40px;
+      height: 40px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #edf7f0, #d6eadf);
+      border: 1px solid #bfd8c6;
+      color: var(--green);
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .brand-copy h1 {
+      margin: 0;
+      font-size: 31px;
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+      font-weight: 700;
+    }
+
+    .brand-copy p {
+      margin: 6px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .refresh {
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      border-radius: 14px;
+      padding: 11px 14px;
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .refresh:hover { border-color: var(--line-strong); }
+
+    .sidebar-scroll {
+      padding: 18px 14px 20px;
+      overflow: auto;
+    }
+
+    .zone {
+      margin-bottom: 18px;
+    }
+
+    .zone-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 8px 8px;
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--soft);
+    }
+
+    .zone-count {
+      font-size: 12px;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+
+    .tree {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .tree-row {
+      position: relative;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      background: rgba(255, 253, 249, 0.78);
+      border: 1px solid rgba(221, 210, 194, 0.92);
+      border-radius: 18px;
+      padding: 10px 12px;
+      transition: 160ms ease;
+      cursor: pointer;
+    }
+
+    .tree-row:hover {
+      border-color: var(--line-strong);
+      transform: translateY(-1px);
+      box-shadow: 0 12px 24px rgba(70, 54, 30, 0.07);
+    }
+
+    .tree-row.active {
+      background: linear-gradient(180deg, rgba(231, 244, 251, 0.92), rgba(255, 253, 249, 0.92));
+      border-color: #a8c2e7;
+      box-shadow: 0 14px 28px rgba(45, 109, 196, 0.10);
+    }
+
+    .tree-row[data-depth="1"] { margin-left: 12px; }
+    .tree-row[data-depth="2"] { margin-left: 28px; }
+    .tree-row[data-depth="3"] { margin-left: 44px; }
+
+    .toggle {
+      width: 22px;
+      height: 22px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      border: 1px solid transparent;
+      color: var(--soft);
+      flex-shrink: 0;
+      margin-top: 2px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle:hover {
+      background: rgba(143, 133, 121, 0.10);
+      border-color: rgba(202, 187, 167, 0.8);
+    }
+
+    .toggle.leaf {
+      color: transparent;
+      cursor: default;
+    }
+
+    .glyph {
+      width: 24px;
+      height: 24px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--green);
+      background: rgba(44, 143, 93, 0.10);
+      border: 1px solid rgba(44, 143, 93, 0.16);
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .row-main {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .row-topline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+
+    .row-label {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      min-width: 0;
+    }
+
+    .row-meta {
+      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+
+    .row-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      margin-left: auto;
+      padding-left: 8px;
+      flex-shrink: 0;
+    }
+
+    .chip,
+    .action,
+    .danger {
+      border-radius: 999px;
+      font-size: 12px;
+      line-height: 1;
+      padding: 8px 11px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .chip {
+      background: #f3eee6;
+      color: var(--muted);
+      border-color: rgba(202, 187, 167, 0.7);
+    }
+
+    .chip.green { background: var(--green-soft); color: var(--green); border-color: #b7dec3; }
+    .chip.blue { background: var(--blue-soft); color: var(--blue); border-color: #c9d9f6; }
+    .chip.amber { background: var(--amber-soft); color: var(--amber); border-color: #ecd9aa; }
+    .chip.red { background: var(--red-soft); color: var(--red); border-color: #e7c1bb; }
+
+    .action {
+      background: var(--panel-strong);
+      color: var(--text);
+      border-color: rgba(202, 187, 167, 0.85);
+    }
+
+    .action.primary {
+      background: #edf5ff;
+      color: var(--blue);
+      border-color: #bfd3f5;
+    }
+
+    .action.success {
+      background: #eef8f2;
+      color: var(--green);
+      border-color: #c5e2ce;
+    }
+
+    .danger {
+      background: #fff7f5;
+      color: var(--red);
+      border-color: #efcec8;
+    }
+
+    .children {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .hidden { display: none !important; }
+
+    .content {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      min-width: 0;
+      padding: 6px 0;
+    }
+
+    .hero,
+    .panel {
+      background: var(--panel);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(202, 187, 167, 0.72);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow);
+    }
+
+    .hero {
+      padding: 28px;
+      min-height: 220px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 24px;
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: var(--soft);
+    }
+
+    .hero h2 {
+      margin: 0;
+      font-size: 48px;
+      line-height: 0.98;
+      letter-spacing: -0.05em;
+      max-width: 12ch;
+    }
+
+    .hero p {
+      margin: 16px 0 0;
+      font-size: 16px;
+      line-height: 1.6;
+      color: var(--muted);
+      max-width: 60ch;
+    }
+
+    .hero-note {
+      border-radius: 24px;
+      background: linear-gradient(180deg, #fffefb, #f7f0e6);
+      border: 1px solid rgba(202, 187, 167, 0.82);
+      padding: 20px;
+      align-self: stretch;
+    }
+
+    .hero-note h3,
+    .panel h3 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+
+    .hero-note p,
+    .panel p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 14px;
+    }
+
+    .stack {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+
+    .panel {
+      padding: 24px;
+    }
+
+    .detail-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .detail-title {
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: -0.04em;
+    }
+
+    .detail-subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .metric {
+      border-radius: 18px;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.55);
+      border: 1px solid rgba(221, 210, 194, 0.92);
+    }
+
+    .metric .k {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--soft);
+      margin-bottom: 8px;
+    }
+
+    .metric .v {
+      font-size: 24px;
+      letter-spacing: -0.04em;
+      font-weight: 700;
+    }
+
+    .spec-list,
+    .control-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .spec-item,
+    .control-item {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.58);
+      border: 1px solid rgba(221, 210, 194, 0.92);
+    }
+
+    .spec-item strong,
+    .control-item strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .spec-item span,
+    .control-item span {
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 13px;
+    }
+
+    .footer-note {
+      padding: 0 6px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .kbd {
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 4px 7px;
+      border-radius: 8px;
+      background: #f2ece2;
+      border: 1px solid #dccfbe;
+      color: #5f5345;
+    }
+
+    @media (max-width: 1200px) {
+      .shell { grid-template-columns: 1fr; }
+      .hero { grid-template-columns: 1fr; }
+      .stack { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .shell { padding: 12px; gap: 12px; }
+      .sidebar-header { padding: 18px 18px 16px; }
+      .brand-copy h1 { font-size: 25px; }
+      .hero { padding: 22px; }
+      .hero h2 { font-size: 36px; }
+      .detail-grid { grid-template-columns: 1fr; }
+      .row-actions { margin-left: 0; justify-content: flex-start; padding-left: 0; }
+      .tree-row { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-mark">⌁</div>
+          <div class="brand-copy">
+            <h1>LeadLag Lab</h1>
+            <p>Standalone menu prototype for pipeline-first UX</p>
+          </div>
+        </div>
+        <button class="refresh" id="refreshBtn">Refresh</button>
+      </div>
+      <div class="sidebar-scroll">
+        <div id="treeRoot"></div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Prototype Direction</p>
+          <h2>Menu shaped by the real research pipeline.</h2>
+          <p>
+            This template uses project-true terminology, ownership, and actions:
+            <span class="kbd">collector</span> leads into
+            <span class="kbd">recordings</span>,
+            recordings own
+            <span class="kbd">analyses</span>,
+            strategies own
+            <span class="kbd">backtests</span> and
+            <span class="kbd">paper runs</span>.
+            It is intentionally standalone and backend-free so we can iterate on structure and control density first.
+          </p>
+        </div>
+        <div class="hero-note">
+          <h3>Prototype Rules</h3>
+          <p>
+            No legacy <strong>session/collection</strong> language in UX.
+            Collector is shown as runtime inside the app, not as a separate systemd service.
+            Quality and Explorer stay as context actions for analyses, not as top-level ownership branches.
+          </p>
+        </div>
+      </section>
+
+      <section class="stack">
+        <div class="panel">
+          <div class="detail-head">
+            <div>
+              <h3 class="detail-title" id="detailTitle">Select a node</h3>
+              <p class="detail-subtitle" id="detailSubtitle">The right panel explains why this node exists in the menu and which controls are visible.</p>
+            </div>
+            <div id="detailBadges" class="row-actions"></div>
+          </div>
+          <div class="detail-grid" id="detailMetrics"></div>
+          <div class="spec-list" id="detailNarrative"></div>
+        </div>
+
+        <div class="panel">
+          <h3>Visible Controls On Selected Node</h3>
+          <div class="control-list" id="detailControls"></div>
+        </div>
+      </section>
+
+      <section class="footer-note">
+        This file is a template, not product code. The current goal is to refine hierarchy, action priority, badges, and row density before wiring anything to the existing UI.
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const treeData = [
+      {
+        id: "dashboard",
+        zone: "Pipeline",
+        label: "Dashboard",
+        type: "page",
+        icon: "D",
+        meta: "Operational landing and overview of the current lab state.",
+        chips: [{ text: "entry point", tone: "blue" }],
+        metrics: [
+          ["Role", "Landing"],
+          ["Actions", "Navigate"],
+          ["Density", "Minimal"],
+          ["Reason", "Start here"]
+        ],
+        narrative: [
+          ["Why it exists", "The dashboard is the first anchor in the workflow and should stay calm. It is not an action rail."],
+          ["What it should not do", "No delete, no crowded badges, no fake entity ownership."],
+        ],
+        controls: [
+          ["Navigate", "Opens the operational overview."],
+          ["Active state", "Highlights that the user is at the root of the workflow."],
+        ],
+      },
+      {
+        id: "collector",
+        zone: "Pipeline",
+        label: "Collector",
+        type: "runtime",
+        icon: "C",
+        meta: "Collector runtime managed by the API inside leadlag-lab.",
+        chips: [
+          { text: "LIVE", tone: "green" },
+          { text: "11 venues", tone: "blue" },
+          { text: "2.4k ev/s", tone: "amber" }
+        ],
+        actions: [
+          { text: "Refresh", tone: "action" }
+        ],
+        metrics: [
+          ["Role", "Pipeline start"],
+          ["State", "Live runtime"],
+          ["Primary signal", "Event rate"],
+          ["Child layer", "Recordings appear downstream"]
+        ],
+        narrative: [
+          ["Why it exists", "Collector begins the user pipeline, but the menu row should stay summary-first rather than becoming a control panel."],
+          ["Project constraint", "This row must not imply a separate collector systemd service. In the project it is an API-managed subprocess."],
+        ],
+        controls: [
+          ["Navigate", "Opens collector detail and runtime controls on the real page."],
+          ["Status badge", "Shows whether the collector is live."],
+          ["Summary chips", "Surface compact venue and throughput context."],
+          ["Refresh", "A safe sidebar-level action for runtime visibility."],
+        ],
+      },
+      {
+        id: "recordings",
+        zone: "Data",
+        label: "Recordings",
+        type: "group",
+        icon: "R",
+        meta: "Raw market data grouped into recordings, each of which owns analyses.",
+        chips: [{ text: "12", tone: "blue" }],
+        expanded: true,
+        metrics: [
+          ["Ownership", "Top-level group"],
+          ["Children", "Recording"],
+          ["Goal", "Lead users toward analysis"],
+          ["Public term", "Recording"]
+        ],
+        narrative: [
+          ["Why it exists", "This is the bridge between collection and research. The menu should make new recordings visible and analyzable."],
+          ["Project constraint", "We use recording and analysis in UX, not collection or session."],
+        ],
+        controls: [
+          ["Expand or collapse", "Controls visibility of recording branches."],
+          ["Group count", "Shows total number of recordings without opening the section."],
+        ],
+        children: [
+          {
+            id: "recording-1",
+            label: "2026-04-22_00-00_BINANCE",
+            type: "recording",
+            icon: "R",
+            meta: "22 Apr, 00:00-04:00 · 11 venues · 3.2M events",
+            chips: [{ text: "4h", tone: "blue" }, { text: "11v", tone: "green" }],
+            actions: [
+              { text: "Analyze", tone: "primary" }
+            ],
+            expanded: true,
+            metrics: [
+              ["Role", "Raw data container"],
+              ["Primary CTA", "Analyze"],
+              ["Owns", "Analyses"],
+              ["Delete visibility", "Allowed but secondary"]
+            ],
+            narrative: [
+              ["Why it exists", "Recording is the place where the user decides whether to create a new analysis. This CTA should be visually obvious."],
+              ["Visual rule", "The row should feel like a source container, not a final destination."],
+            ],
+            controls: [
+              ["Navigate", "Opens recording detail or recording-focused page state."],
+              ["Analyze", "Primary forward action from raw data into analysis."],
+              ["Status chips", "Compact duration and venue count."],
+              ["Delete trigger", "Secondary destructive action for later refinement."],
+            ],
+            children: [
+              {
+                id: "analysis-1",
+                label: "analysis_threshold1.5_bin50",
+                type: "analysis",
+                icon: "A",
+                meta: "165 events · threshold_sigma 1.5 · bin 50 ms",
+                chips: [{ text: "165 ev", tone: "blue" }],
+                actions: [
+                  { text: "Quality", tone: "action" },
+                  { text: "Explorer", tone: "action" },
+                  { text: "Run BT", tone: "primary" },
+                  { text: "Delete", tone: "danger" }
+                ],
+                metrics: [
+                  ["Role", "Research node"],
+                  ["Primary CTA", "Run BT"],
+                  ["Fast links", "Quality, Explorer"],
+                  ["Ownership", "Owned by recording"]
+                ],
+                narrative: [
+                  ["Why it exists", "Analysis is where the menu stops being about data capture and becomes about research navigation."],
+                  ["Project constraint", "Quality and Explorer are context surfaces, not separate ownership branches in the tree."],
+                ],
+                controls: [
+                  ["Navigate", "Opens the canonical analysis context."],
+                  ["Quality", "Fast quality inspection path."],
+                  ["Explorer", "Fast event exploration path."],
+                  ["Run BT", "Forward pipeline action into strategy validation."],
+                  ["Delete", "Inline-danger trigger, not modal."],
+                ],
+              },
+              {
+                id: "analysis-2",
+                label: "analysis_threshold1.2_bin50",
+                type: "analysis",
+                icon: "A",
+                meta: "24 events · threshold_sigma 1.2 · bin 50 ms",
+                chips: [{ text: "low sample", tone: "amber" }],
+                actions: [
+                  { text: "Quality", tone: "action" },
+                  { text: "Explorer", tone: "action" },
+                  { text: "Run BT", tone: "primary" }
+                ],
+                metrics: [
+                  ["Role", "Alternative analysis"],
+                  ["Warning", "Low sample"],
+                  ["Forward action", "Run BT still visible"],
+                  ["Interpretation", "Needs careful quality review"]
+                ],
+                narrative: [
+                  ["Why it exists", "Alternative analyses show that one recording may produce several research paths with different parameters."],
+                  ["Visual rule", "A warning badge should change attention, not erase the rest of the workflow."],
+                ],
+                controls: [
+                  ["Status badge", "Warns about sample quality."],
+                  ["Quality and Explorer", "Stay available because the user still needs to inspect it."],
+                  ["Run BT", "May remain visible, but its visual priority can be debated later."],
+                ],
+              }
+            ]
+          },
+          {
+            id: "recording-2",
+            label: "2026-04-21_00-00_BYBIT",
+            type: "recording",
+            icon: "R",
+            meta: "21 Apr, 00:00-04:00 · 9 venues · 2.1M events",
+            chips: [{ text: "4h", tone: "blue" }],
+            actions: [
+              { text: "Analyze", tone: "primary" }
+            ],
+            metrics: [
+              ["Role", "Raw data container"],
+              ["State", "Collapsed example"],
+              ["Use", "Past dataset"],
+              ["Owner", "Recordings group"]
+            ],
+            narrative: [
+              ["Why it exists", "This node shows how the tree looks when a recording is present but not actively expanded."],
+            ],
+            controls: [
+              ["Navigate", "Open the recording."],
+              ["Analyze", "Start another analysis from the same source data."],
+            ],
+          }
+        ]
+      },
+      {
+        id: "strategies",
+        zone: "Research",
+        label: "Strategies",
+        type: "group",
+        icon: "S",
+        meta: "Research artifacts that own backtests and paper runs in the menu.",
+        chips: [{ text: "8", tone: "blue" }],
+        expanded: true,
+        metrics: [
+          ["Ownership", "Top-level group"],
+          ["Children", "Strategy"],
+          ["Branch type", "Research to execution"],
+          ["Public term", "Strategy"]
+        ],
+        narrative: [
+          ["Why it exists", "Strategies are a separate branch from recordings because backtests are owned by strategies in the canonical tree."],
+          ["Project constraint", "Backtest equals strategy by analysis, but analysis is a reference, not a second owner in the menu tree."],
+        ],
+        controls: [
+          ["Expand or collapse", "Shows strategy branches."],
+          ["Group count", "Shows how many strategies exist."],
+        ],
+        children: [
+          {
+            id: "strategy-1",
+            label: "momentum_meanrev",
+            type: "strategy",
+            icon: "S",
+            meta: "Notebook connected · 3 backtests · 1 live paper run",
+            chips: [
+              { text: "nb✓", tone: "green" },
+              { text: "3 BT", tone: "blue" },
+              { text: "LIVE paper", tone: "green" }
+            ],
+            actions: [
+              { text: "Run BT", tone: "primary" },
+              { text: "Open Notebook", tone: "action" },
+              { text: "Delete", tone: "danger" }
+            ],
+            expanded: true,
+            metrics: [
+              ["Role", "Research artifact"],
+              ["Primary CTA", "Run BT"],
+              ["Notebook state", "Connected"],
+              ["Owns", "Backtests and paper runs"]
+            ],
+            narrative: [
+              ["Why it exists", "Strategy is a long-lived artifact and the natural owner of validation history."],
+              ["Open design question", "Run BT and Open Notebook compete for priority on this row. This prototype currently gives Run BT the primary position."],
+            ],
+            controls: [
+              ["Navigate", "Open strategy detail."],
+              ["Run BT", "Primary strategy-to-validation action."],
+              ["Open Notebook", "Fast bridge back to Jupyter workflow."],
+              ["Delete", "Danger trigger for cascade flow."],
+            ],
+            children: [
+              {
+                id: "backtest-1",
+                label: "BT_2026-04-22_01",
+                type: "backtest",
+                icon: "B",
+                meta: "Analysis: threshold1.5 · 1,284 trades · Sharpe 1.37",
+                chips: [
+                  { text: "+1.84x", tone: "green" },
+                  { text: "MC", tone: "green" }
+                ],
+                actions: [
+                  { text: "View", tone: "action" },
+                  { text: "Run MC", tone: "primary" },
+                  { text: "Delete", tone: "danger" }
+                ],
+                expanded: true,
+                metrics: [
+                  ["Role", "Validation result"],
+                  ["Primary CTA", "Run MC"],
+                  ["Referenced analysis", "analysis_threshold1.5_bin50"],
+                  ["Status", "Positive sample"]
+                ],
+                narrative: [
+                  ["Why it exists", "Backtest rows should feel evaluative: enough context to judge quality, but not a full stats sheet."],
+                  ["Project constraint", "The row may mention which analysis it references, but ownership stays under strategy."],
+                ],
+                controls: [
+                  ["Navigate", "Open full backtest detail."],
+                  ["View", "Secondary shortcut when a compact CTA is helpful."],
+                  ["Run MC", "Primary forward action into robustness validation."],
+                  ["Delete", "Cascade-aware danger trigger."],
+                ],
+                children: [
+                  {
+                    id: "mc-1",
+                    label: "MC_2026-04-22_01",
+                    type: "montecarlo",
+                    icon: "M",
+                    meta: "500 runs · p99 2.21x · max DD(p95) -20.3%",
+                    chips: [{ text: "robust", tone: "green" }],
+                    actions: [
+                      { text: "Start Paper", tone: "success" },
+                      { text: "Delete", tone: "danger" }
+                    ],
+                    metrics: [
+                      ["Role", "Robustness step"],
+                      ["Primary CTA", "Start Paper"],
+                      ["Runs", "500"],
+                      ["Signal", "Looks robust"]
+                    ],
+                    narrative: [
+                      ["Why it exists", "Monte Carlo is a downstream validation node, not a sibling of recordings or strategies."],
+                    ],
+                    controls: [
+                      ["Navigate", "Open Monte Carlo detail."],
+                      ["Start Paper", "Forward action into operational paper trading."],
+                      ["Delete", "Removes MC results while leaving backtest."],
+                    ],
+                  }
+                ]
+              },
+              {
+                id: "paper-1",
+                label: "PAPER_binance",
+                type: "paper",
+                icon: "P",
+                meta: "Running 2h 48m · 32 trades · win rate 53.1%",
+                chips: [
+                  { text: "LIVE", tone: "green" },
+                  { text: "32 trades", tone: "blue" }
+                ],
+                actions: [
+                  { text: "View", tone: "action" },
+                  { text: "Stop", tone: "action" },
+                  { text: "Delete", tone: "danger" }
+                ],
+                metrics: [
+                  ["Role", "Operational execution branch"],
+                  ["Primary CTA", "View"],
+                  ["Secondary action", "Stop"],
+                  ["Risk", "Needs careful visual balance"]
+                ],
+                narrative: [
+                  ["Why it exists", "Paper runs are the execution branch and should read as live operations without hijacking the whole menu."],
+                  ["Visual rule", "Stop must be available, but it should not dominate the row like a panic button."],
+                ],
+                controls: [
+                  ["Navigate", "Open paper run detail."],
+                  ["View", "Main safe action."],
+                  ["Stop", "Operational control shown with restrained emphasis."],
+                  ["Delete", "Standalone destructive action."],
+                ],
+              }
+            ]
+          },
+          {
+            id: "strategy-2",
+            label: "leadlag_xgboost",
+            type: "strategy",
+            icon: "S",
+            meta: "Notebook missing · 1 backtest remains visible",
+            chips: [{ text: "nb⚠", tone: "amber" }],
+            actions: [
+              { text: "Run BT", tone: "primary" },
+              { text: "Delete", tone: "danger" }
+            ],
+            metrics: [
+              ["Role", "Strategy with external notebook issue"],
+              ["Warning", "Notebook missing"],
+              ["Needed follow-up", "Cleanup or repair"],
+              ["Reason", "Represents project review case"]
+            ],
+            narrative: [
+              ["Why it exists", "The notebook-missing state is part of the real project flow and should have a visible badge language in the tree."],
+            ],
+            controls: [
+              ["Status badge", "Shows the notebook warning directly on the node."],
+              ["Run BT", "Still possible in the prototype state model, though we may later tone this down."],
+              ["Delete", "Cleanup path for broken strategy state."],
+            ],
+          }
+        ]
+      },
+      {
+        id: "jupyter",
+        zone: "Workbench",
+        label: "Open Jupyter",
+        type: "external",
+        icon: "J",
+        meta: "External workbench for notebook-driven strategy development.",
+        chips: [{ text: "external", tone: "blue" }],
+        actions: [
+          { text: "Open", tone: "success" }
+        ],
+        metrics: [
+          ["Role", "Workbench bridge"],
+          ["Ownership", "Top-level utility"],
+          ["Action", "Open external UI"],
+          ["Tree behavior", "No children"]
+        ],
+        narrative: [
+          ["Why it exists", "Jupyter remains a central part of the strategy workflow, but it is not owned by a specific strategy row in the top-level tree."],
+        ],
+        controls: [
+          ["Navigate or open", "Launches the external notebook environment."],
+          ["External affordance", "Should visually read as leaving the menu context."],
+        ],
+      }
+    ];
+
+    const state = {
+      activeId: "analysis-1",
+      expanded: new Set(["recordings", "recording-1", "strategies", "strategy-1", "backtest-1"]),
+    };
+
+    function flattenNodes(nodes, bucket = []) {
+      for (const node of nodes) {
+        bucket.push(node);
+        if (node.children) flattenNodes(node.children, bucket);
+      }
+      return bucket;
+    }
+
+    const nodeIndex = new Map(flattenNodes(treeData).map(node => [node.id, node]));
+
+    function renderChip(item) {
+      const tone = item.tone ? " " + item.tone : "";
+      return `<span class="chip${tone}">${item.text}</span>`;
+    }
+
+    function renderAction(item) {
+      const cls = item.tone === "danger" ? "danger" : "action" + (item.tone ? " " + item.tone : "");
+      return `<span class="${cls}">${item.text}</span>`;
+    }
+
+    function renderTree() {
+      const root = document.getElementById("treeRoot");
+      const zones = {};
+
+      for (const node of treeData) {
+        const zoneName = node.zone || "Other";
+        if (!zones[zoneName]) zones[zoneName] = [];
+        zones[zoneName].push(node);
+      }
+
+      root.innerHTML = Object.entries(zones).map(([name, nodes]) => {
+        const zoneCount = countVisibleEntities(nodes);
+        return `
+          <section class="zone">
+            <div class="zone-title">
+              <span>${name}</span>
+              <span class="zone-count">${zoneCount}</span>
+            </div>
+            <div class="tree">
+              ${nodes.map(node => renderNode(node, 0)).join("")}
+            </div>
+          </section>
+        `;
+      }).join("");
+
+      bindTreeEvents();
+    }
+
+    function countVisibleEntities(nodes) {
+      let count = 0;
+      for (const node of nodes) {
+        count += 1;
+        if (node.children) count += countVisibleEntities(node.children);
+      }
+      return count;
+    }
+
+    function isExpanded(node) {
+      if (!node.children || !node.children.length) return false;
+      return state.expanded.has(node.id) || node.expanded;
+    }
+
+    function renderNode(node, depth) {
+      const expanded = isExpanded(node);
+      const hasChildren = !!(node.children && node.children.length);
+      const activeClass = state.activeId === node.id ? " active" : "";
+      const toggleLabel = hasChildren ? (expanded ? "▾" : "▸") : "·";
+      const childrenHtml = hasChildren && expanded
+        ? `<div class="children">${node.children.map(child => renderNode(child, depth + 1)).join("")}</div>`
+        : "";
+
+      return `
+        <div>
+          <div class="tree-row${activeClass}" data-id="${node.id}" data-depth="${depth}">
+            <div class="toggle ${hasChildren ? "" : "leaf"}" data-toggle="${node.id}">${toggleLabel}</div>
+            <div class="glyph">${node.icon}</div>
+            <div class="row-main">
+              <div class="row-topline">
+                <span class="row-label">${node.label}</span>
+                ${(node.chips || []).map(renderChip).join("")}
+              </div>
+              <div class="row-meta">${node.meta || ""}</div>
+            </div>
+            <div class="row-actions">
+              ${(node.actions || []).map(renderAction).join("")}
+            </div>
+          </div>
+          ${childrenHtml}
+        </div>
+      `;
+    }
+
+    function bindTreeEvents() {
+      document.querySelectorAll("[data-toggle]").forEach(el => {
+        el.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const id = el.getAttribute("data-toggle");
+          const node = nodeIndex.get(id);
+          if (!node || !node.children || !node.children.length) return;
+          if (state.expanded.has(id)) state.expanded.delete(id);
+          else state.expanded.add(id);
+          renderTree();
+        });
+      });
+
+      document.querySelectorAll(".tree-row").forEach(el => {
+        el.addEventListener("click", () => {
+          state.activeId = el.getAttribute("data-id");
+          renderTree();
+          renderDetail();
+        });
+      });
+    }
+
+    function renderDetail() {
+      const node = nodeIndex.get(state.activeId);
+      if (!node) return;
+
+      document.getElementById("detailTitle").textContent = node.label;
+      document.getElementById("detailSubtitle").textContent = node.meta || "";
+      document.getElementById("detailBadges").innerHTML = (node.chips || []).map(renderChip).join("");
+
+      const metrics = node.metrics || [];
+      document.getElementById("detailMetrics").innerHTML = metrics.map(([k, v]) => `
+        <div class="metric">
+          <div class="k">${k}</div>
+          <div class="v">${v}</div>
+        </div>
+      `).join("");
+
+      const narrative = node.narrative || [];
+      document.getElementById("detailNarrative").innerHTML = narrative.map(([title, body]) => `
+        <div class="spec-item">
+          <strong>${title}</strong>
+          <span>${body}</span>
+        </div>
+      `).join("");
+
+      const controls = node.controls || [];
+      document.getElementById("detailControls").innerHTML = controls.map(([title, body]) => `
+        <div class="control-item">
+          <strong>${title}</strong>
+          <span>${body}</span>
+        </div>
+      `).join("");
+    }
+
+    document.getElementById("refreshBtn").addEventListener("click", () => {
+      renderTree();
+      renderDetail();
+    });
+
+    renderTree();
+    renderDetail();
+  </script>
+</body>
+</html>
